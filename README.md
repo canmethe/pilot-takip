@@ -9,7 +9,7 @@ This is a simple web app for pilots to track flight logs and visualize them on a
 - View flight details
 - Delete flight records
 - Load demo data
-- Store data in the browser using localStorage
+- Store data in the browser using localStorage ..
 
 ## Hosting
 
