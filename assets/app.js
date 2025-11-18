@@ -1,3 +1,114 @@
+import { supabase } from './supabaseClient.js';
+
+let currentFlights = [];
+
+function rowToFlightObj(row) {
+    return {
+        id: row.id,
+        havaAraci: row.aircraft || '',
+        pilotlar: row.crew || '',
+        sure: row.duration_hours != null ? String(row.duration_hours) : '',
+        kalkis: row.from_airport || '',
+        inis: row.to_airport || '',
+        tarih: row.flight_date || '',
+        ucusTipi: row.flight_type || '',
+        ucusZamani: row.flight_time || '',
+        nightVision: !!row.night_vision,
+        ucusNotu: row.note || ''
+    };
+}
+
+function flightObjToPayload(ucus) {
+    return {
+        aircraft: ucus.havaAraci || '',
+        crew: ucus.pilotlar || '',
+        duration_hours: ucus.sure ? parseFloat(ucus.sure) || 0 : 0,
+        from_airport: ucus.kalkis || '',
+        to_airport: ucus.inis || '',
+        flight_date: ucus.tarih || null,
+        flight_type: ucus.ucusTipi || '',
+        flight_time: ucus.ucusZamani || '',
+        night_vision: !!ucus.nightVision,
+        note: ucus.ucusNotu || ''
+    };
+}
+
+async function fetchFlights() {
+    try {
+        const { data, error } = await supabase.from('flights').select('*');
+        if (error) {
+            console.error('Supabase fetchFlights error:', error.message);
+            return [];
+        }
+        currentFlights = (data || []).map(rowToFlightObj);
+        return currentFlights;
+    } catch (e) {
+        console.error('Supabase fetchFlights exception:', e);
+        return [];
+    }
+}
+
+async function insertFlight(ucus) {
+    try {
+        const payload = flightObjToPayload(ucus);
+        const { data, error } = await supabase.from('flights').insert(payload).select('*').single();
+        if (error) {
+            console.error('insertFlight error:', error.message);
+            alert('Failed to save flight.');
+            return null;
+        }
+        const saved = rowToFlightObj(data);
+        currentFlights.push(saved);
+        return saved;
+    } catch (e) {
+        console.error('insertFlight exception:', e);
+        alert('Failed to save flight.');
+        return null;
+    }
+}
+
+async function updateFlightInDb(ucus) {
+    if (!ucus.id) return null;
+    try {
+        const payload = flightObjToPayload(ucus);
+        const { data, error } = await supabase
+            .from('flights')
+            .update(payload)
+            .eq('id', ucus.id)
+            .select('*')
+            .single();
+        if (error) {
+            console.error('updateFlightInDb error:', error.message);
+            alert('Failed to update flight.');
+            return null;
+        }
+        const updated = rowToFlightObj(data);
+        const idx = currentFlights.findIndex(f => f.id === updated.id);
+        if (idx > -1) currentFlights[idx] = updated; else currentFlights.push(updated);
+        return updated;
+    } catch (e) {
+        console.error('updateFlightInDb exception:', e);
+        alert('Failed to update flight.');
+        return null;
+    }
+}
+
+async function deleteFlightInDb(id) {
+    if (!id) return;
+    try {
+        const { error } = await supabase.from('flights').delete().eq('id', id);
+        if (error) {
+            console.error('deleteFlightInDb error:', error.message);
+            alert('Failed to delete flight.');
+            return;
+        }
+        currentFlights = currentFlights.filter(f => f.id !== id);
+    } catch (e) {
+        console.error('deleteFlightInDb exception:', e);
+        alert('Failed to delete flight.');
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // Calendar settings
     const calendarEl = document.getElementById('calendar');
@@ -9,7 +120,7 @@ document.addEventListener('DOMContentLoaded', function() {
             right: 'dayGridMonth,timeGridWeek,timeGridDay'
         },
             locale: 'en',
-        events: getUcuslar(),
+        events: [],
         editable: true, // enable drag-n-drop
         eventDrop: function(info) {
             // user dragged an event to a different date/time
@@ -19,10 +130,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const newIso = ev.start ? ev.start.toISOString() : null;
             if (newIso) {
                 props.tarih = newIso;
-                // persist change
-                updateUcus(Object.assign({ id: ev.id }, props, { tarih: newIso }));
-                // also update extendedProps
-                Object.keys(props).forEach(k => ev.setExtendedProp(k, props[k]));
+                const updated = Object.assign({ id: ev.id }, props, { tarih: newIso });
+                (async () => {
+                    const saved = await updateUcus(updated);
+                    if (!saved) return;
+                    Object.keys(saved).forEach(k => ev.setExtendedProp(k, saved[k]));
+                    if (window.updatePersonalStats) window.updatePersonalStats();
+                })();
             }
         },
         eventClick: function(info) {
@@ -33,11 +147,23 @@ document.addEventListener('DOMContentLoaded', function() {
     // expose calendar globally so other functions can access it
     window.calendar = calendar;
 
+    // Load existing flights from Supabase and add to calendar
+    (async () => {
+        const flights = await fetchFlights();
+        flights.forEach(f => {
+            calendar.addEvent({
+                id: f.id,
+                title: `${f.havaAraci} - ${f.pilotlar}`,
+                start: f.tarih,
+                extendedProps: f
+            });
+        });
+    })();
+
     // Form submission
     document.getElementById('ucusForm').addEventListener('submit', function(e) {
         e.preventDefault();
         const yeniUcus = {
-            id: Date.now().toString(),
             havaAraci: document.getElementById('havaAraci').value,
             pilotlar: document.getElementById('ucusPilotlari').value,
             sure: document.getElementById('ucusSuresi').value,
@@ -50,16 +176,19 @@ document.addEventListener('DOMContentLoaded', function() {
             nightVision: (document.getElementById('nightVision') && document.getElementById('nightVision').checked) || false,
             ucusNotu: (document.getElementById('ucusNotu') && document.getElementById('ucusNotu').value) || ''
         };
-        
-        kaydetUcus(yeniUcus);
-        calendar.addEvent({
-            id: yeniUcus.id,
-            title: `${yeniUcus.havaAraci} - ${yeniUcus.pilotlar}`,
-            start: yeniUcus.tarih,
-            extendedProps: yeniUcus
-        });
-        
-        this.reset();
+        (async () => {
+            const saved = await insertFlight(yeniUcus);
+            if (!saved) return;
+            calendar.addEvent({
+                id: saved.id,
+                title: `${saved.havaAraci} - ${saved.pilotlar}`,
+                start: saved.tarih,
+                extendedProps: saved
+            });
+            try { if (saved.havaAraci) saveAircraft(saved.havaAraci); } catch(e){}
+            if (window.updatePersonalStats) window.updatePersonalStats();
+            document.getElementById('ucusForm').reset();
+        })();
     });
 
     // Add demo data (button may have been removed; safe binding)
@@ -118,11 +247,10 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// LocalStorage işlemleri
+// Uçuş CRUD işlemleri artık Supabase üzerinden
 function getUcuslar() {
-    const key = storageKey();
-    const ucuslar = JSON.parse(localStorage.getItem(key) || '[]');
-    return ucuslar.map(ucus => ({
+    // Legacy callers expect an array of event defs; use currentFlights
+    return currentFlights.map(ucus => ({
         id: ucus.id,
         title: `${ucus.havaAraci} - ${ucus.pilotlar}`,
         start: ucus.tarih,
@@ -130,18 +258,13 @@ function getUcuslar() {
     }));
 }
 
-function kaydetUcus(ucus) {
-    const key = storageKey();
-    const ucuslar = JSON.parse(localStorage.getItem(key) || '[]');
-    ucuslar.push(ucus);
-    localStorage.setItem(key, JSON.stringify(ucuslar));
+async function kaydetUcus(ucus) {
+    const saved = await insertFlight(ucus);
+    return saved;
 }
 
-function silUcus(ucusId) {
-    const key = storageKey();
-    let ucuslar = JSON.parse(localStorage.getItem(key) || '[]');
-    ucuslar = ucuslar.filter(ucus => ucus.id !== ucusId);
-    localStorage.setItem(key, JSON.stringify(ucuslar));
+async function silUcus(ucusId) {
+    await deleteFlightInDb(ucusId);
     // Takvimde ilgili etkinliği kaldır (eğer calendar örneği mevcutsa)
     if (window.calendar) {
         try {
@@ -149,14 +272,7 @@ function silUcus(ucusId) {
                 if (e.id === ucusId) e.remove();
             });
         } catch (err) {
-            // Hata olursa takvimi tamamen yeniden yükle
-            try {
-                window.calendar.removeAllEvents();
-                const events = getUcuslar();
-                events.forEach(ev => window.calendar.addEvent(ev));
-            } catch (e) {
-                console.error('Takvim güncellenemedi:', e);
-            }
+            console.error('Takvim güncellenemedi:', err);
         }
     }
 }
@@ -189,17 +305,10 @@ function gosterUcusDetay(event) {
     modal.show();
 }
 
-// Güncelleme fonksiyonu: var olan kaydı günceller veya ekler
-function updateUcus(ucus) {
-    const key = storageKey();
-    const ucuslar = JSON.parse(localStorage.getItem(key) || '[]');
-    const idx = ucuslar.findIndex(u => u.id === ucus.id);
-    if (idx > -1) {
-        ucuslar[idx] = ucus;
-    } else {
-        ucuslar.push(ucus);
-    }
-    localStorage.setItem(key, JSON.stringify(ucuslar));
+// Güncelleme fonksiyonu: var olan kaydı günceller veya ekler (Supabase)
+async function updateUcus(ucus) {
+    const updated = await updateFlightInDb(ucus);
+    return updated;
 }
 
 // ---------- CSV / JSON helpers ----------
@@ -464,8 +573,9 @@ document.addEventListener('DOMContentLoaded', function() {
             inis: document.getElementById('edit_inis').value,
             tarih: document.getElementById('edit_tarih').value
         };
-        // localStorage güncelle
-        updateUcus(updated);
+        (async () => {
+            const saved = await updateUcus(updated);
+            if (!saved) return;
 
         // takvim etkinliğini güncelle
         try {
@@ -475,6 +585,7 @@ document.addEventListener('DOMContentLoaded', function() {
             Object.keys(updated).forEach(k => {
                 if (k !== 'id') event.setExtendedProp(k, updated[k]);
             });
+            if (window.updatePersonalStats) window.updatePersonalStats();
         } catch (e) {
             console.error('Error updating event:', e);
         }
@@ -909,7 +1020,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function updatePersonalStats() {
         try {
             console.debug('updatePersonalStats: starting');
-            const raw = JSON.parse(localStorage.getItem(storageKey()) || '[]');
+            const raw = currentFlights.slice();
             console.debug('updatePersonalStats: raw length=', raw.length);
             let weekly = 0, monthly = 0, total = 0;
             const now = new Date();
@@ -1199,4 +1310,6 @@ document.addEventListener('DOMContentLoaded', function() {
     window.kaydetUcus = function(ucus) { originalKaydet(ucus); try { if (ucus && ucus.havaAraci) saveAircraft(ucus.havaAraci); } catch (e) {} updatePersonalStats(); };
     // expose updater to global so other flows (import) can call it
     window.updatePersonalStats = updatePersonalStats;
+    // expose Supabase test helper globally
+    window.fetchFlights = fetchFlights;
 });
