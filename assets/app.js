@@ -606,6 +606,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // güncellenmiş id ile modal kapatılabilir
         const modal = bootstrap.Modal.getInstance(document.getElementById('ucusDetayModal'));
         // modal.hide(); // isteğe bağlı: otomatik kapatma yapmıyoruz
+        })();
     });
 
     // Ayarlar paneli toggler
@@ -1307,7 +1308,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // also update stats when import/export or data changes
     const originalKaydet = kaydetUcus;
     // wrap kaydetUcus to call updatePersonalStats after save and register aircraft
-    window.kaydetUcus = function(ucus) { originalKaydet(ucus); try { if (ucus && ucus.havaAraci) saveAircraft(ucus.havaAraci); } catch (e) {} updatePersonalStats(); };
+    window.kaydetUcus = async function(ucus) {
+        const result = await originalKaydet(ucus);
+        try {
+            if (ucus && ucus.havaAraci) saveAircraft(ucus.havaAraci);
+        } catch (e) {}
+        updatePersonalStats();
+        return result;
+    };
     // expose updater to global so other flows (import) can call it
     window.updatePersonalStats = updatePersonalStats;
     // expose Supabase test helper globally
