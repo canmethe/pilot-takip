@@ -477,6 +477,69 @@ select.form-control option {
     box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
 }
 
+/* Privacy Mode Styles */
+.private-blur {
+    filter: blur(6px);
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+    opacity: 0.7;
+    transition: all 0.3s ease;
+}
+
+.privacy-active .private-blur-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.privacy-placeholder-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    background: rgba(35, 40, 55, 0.5);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 1rem;
+}
+
+.privacy-placeholder-card i {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    color: var(--accent-color);
+    opacity: 0.5;
+}
+
+/* Header Privacy Toggle */
+#privacyToggleBtn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.1);
+    color: var(--text-secondary);
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+#privacyToggleBtn:hover {
+    background: rgba(255,255,255,0.1);
+    color: var(--text-primary);
+}
+
+#privacyToggleBtn.active {
+    background: rgba(0, 255, 149, 0.1);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+    box-shadow: 0 0 10px rgba(0, 255, 149, 0.2);
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .container {

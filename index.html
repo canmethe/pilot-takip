@@ -39,7 +39,10 @@
                     <i class='bx bxs-plane-take-off'></i>
                     <span data-i18n="title">Pilot Flight Tracker</span>
                 </h1>
-                <div>
+                <div class="d-flex align-items-center gap-2" id="authArea">
+                    <button id="privacyToggleBtn" title="Toggle Privacy Mode" aria-label="Toggle Privacy Mode">
+                        <i class='bx bx-lock-open-alt'></i>
+                    </button>
                     <button id="settingsToggle" class="btn btn-secondary" data-i18n="settings">Settings</button>
                 </div>
             </div>
@@ -66,20 +69,17 @@
                 <!-- Settings panel (hidden) -->
                 <div id="settingsPanel" class="card mb-3" style="display:none;">
                     <div class="card-body d-flex flex-column gap-2 align-items-start">
+                        <div class="d-flex gap-2 align-items-center w-100 mb-2">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="privacyModeSwitch">
+                                <label class="form-check-label" for="privacyModeSwitch" data-i18n="privacyModeLabel">Privacy Mode</label>
+                            </div>
+                            <small class="text-muted ms-2" data-i18n="privacyModeHint">(Hide sensitive flight hours)</small>
+                        </div>
                         <div class="d-flex gap-2 align-items-center w-100">
                             <span class="me-2" data-i18n="sandboxDataLabel">Sandbox / Data:</span>
                             <button id="veriTemizle" class="btn btn-danger" data-i18n="veriTemizle">Clear All Data</button>
                         </div>
-                        <div class="d-flex gap-2 align-items-center w-100">
-                                        <button id="exportCsv" class="btn btn-outline-light" data-i18n="exportCsv">Export CSV</button>
-                                        <button id="exportJson" class="btn btn-outline-light" data-i18n="exportJson">Export JSON</button>
-                            <label class="btn btn-outline-light mb-0">
-                                            <span data-i18n="importFile">Import File</span>
-                                <input id="importFile" type="file" accept=".csv,.json" style="display:none">
-                            </label>
-                            <small class="text-muted ms-3" data-i18n="importHint">(Upload a CSV or JSON file)</small>
-                        </div>
-                                    <!-- language selector removed: app is English-only -->
                         <small class="text-muted ms-1" data-i18n="settingsWarning">(This will clear all records stored in localStorage)</small>
                     </div>
                 </div>
@@ -109,15 +109,15 @@
                                     <label for="ucusCrew" class="form-label" data-i18n="crew">Crew</label>
                                     <input type="text" class="form-control" id="ucusCrew" placeholder="" data-i18n-placeholder="crewPlaceholder">
                                 </div>
-                                <div class="col-md-4 mb-3">
+                                <div class="col-md-6 mb-3">
                                     <label for="ucusSuresi" class="form-label" data-i18n="ucusSuresi">Flight Duration (hrs)</label>
                                     <input type="number" class="form-control" id="ucusSuresi" step="0.1" required>
                                 </div>
-                                <div class="col-md-4 mb-3">
+                                <div class="col-md-6 mb-3">
                                     <label for="kalkisYeri" class="form-label" data-i18n="kalkisYeri">Departure</label>
                                     <input type="text" class="form-control" id="kalkisYeri" required>
                                 </div>
-                                <div class="col-md-4 mb-3">
+                                <div class="col-md-6 mb-3">
                                     <label for="inisYeri" class="form-label" data-i18n="inisYeri">Arrival</label>
                                     <input type="text" class="form-control" id="inisYeri" required>
                                 </div>
@@ -144,7 +144,7 @@
                                         <option value="night" data-i18n="timeNight">Night</option>
                                     </select>
                                 </div>
-                                <div class="col-md-3 mb-3 d-flex align-items-end">
+                                <div class="col-12 mb-3">
                                     <div class="form-check">
                                         <input class="form-check-input" type="checkbox" id="nightVision">
                                         <label class="form-check-label" for="nightVision" data-i18n="nightVision">Night Vision</label>
@@ -172,16 +172,20 @@
               <div class="card bg-dark text-light p-4 mt-3">
                   <h4 class="mb-4" data-i18n="title_personal">My Flight Info</h4>
                   <div class="row">
-                      <div class="col-md-4 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightPieChart" width="220" height="220"></canvas>
+                      <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
+                          <canvas id="flightPieChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_all">All Flight Types</div>
                       </div>
-                      <div class="col-md-4 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightDayChart" width="220" height="220"></canvas>
+                      <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
+                          <canvas id="pilotPieChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
+                          <div class="mt-2 small text-muted" data-i18n="chart_pilot">All Pilots Type</div>
+                      </div>
+                      <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
+                          <canvas id="flightDayChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_day">Day Flights</div>
                       </div>
-                      <div class="col-md-4 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightNightChart" width="220" height="220"></canvas>
+                      <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
+                          <canvas id="flightNightChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_night">Night Flights</div>
                       </div>
                   </div>

@@ -1,6 +1,10 @@
-import { supabase } from './supabaseClient.js';
+import { supabase, getCurrentUser } from './supabaseClient.js';
 
+let currentUser = null;
 let currentFlights = [];
+let currentAircrafts = [];
+let currentReminders = [];
+let privacyMode = false;
 
 function rowToFlightObj(row) {
     return {
@@ -49,8 +53,13 @@ async function fetchFlights() {
 }
 
 async function insertFlight(ucus) {
+    if (!currentUser) {
+        alert('Please sign in to save flights.');
+        return null;
+    }
     try {
         const payload = flightObjToPayload(ucus);
+        payload.user_id = currentUser.id;
         const { data, error } = await supabase.from('flights').insert(payload).select('*').single();
         if (error) {
             console.error('insertFlight error:', error.message);
@@ -71,6 +80,8 @@ async function updateFlightInDb(ucus) {
     if (!ucus.id) return null;
     try {
         const payload = flightObjToPayload(ucus);
+        // user_id is not needed for update usually, but good practice to ensure ownership if RLS policies require it
+        // payload.user_id = currentUser.id; 
         const { data, error } = await supabase
             .from('flights')
             .update(payload)
@@ -147,10 +158,106 @@ document.addEventListener('DOMContentLoaded', function() {
     // expose calendar globally so other functions can access it
     window.calendar = calendar;
 
+    // --- Privacy Mode Logic
+    async function fetchSettings() {
+        if (!currentUser) return;
+        try {
+            const { data, error } = await supabase.from('user_settings').select('privacy_mode').eq('user_id', currentUser.id).single();
+            if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+                console.error('fetchSettings error:', error);
+            }
+            if (data) {
+                privacyMode = !!data.privacy_mode;
+            } else {
+                // default false
+                privacyMode = false;
+            }
+            applyPrivacyMode();
+        } catch (e) {
+            console.error('fetchSettings exception:', e);
+        }
+    }
+
+    async function savePrivacyMode(val) {
+        if (!currentUser) return;
+        try {
+            const { error } = await supabase.from('user_settings').upsert({
+                user_id: currentUser.id,
+                privacy_mode: val,
+                updated_at: new Date().toISOString()
+            });
+            if (error) throw error;
+        } catch (e) {
+            console.error('savePrivacyMode error:', e);
+        }
+    }
+
+    function togglePrivacyMode() {
+        privacyMode = !privacyMode;
+        applyPrivacyMode();
+        savePrivacyMode(privacyMode);
+    }
+
+    function applyPrivacyMode() {
+        // Update UI state
+        const btn = document.getElementById('privacyToggleBtn');
+        const sw = document.getElementById('privacyModeSwitch');
+        const icon = btn ? btn.querySelector('i') : null;
+        
+        if (privacyMode) {
+            document.body.classList.add('privacy-active');
+            if (btn) {
+                btn.classList.add('active');
+                btn.setAttribute('title', 'Privacy Mode On');
+            }
+            if (icon) {
+                icon.className = 'bx bx-lock-alt';
+            }
+            if (sw) sw.checked = true;
+        } else {
+            document.body.classList.remove('privacy-active');
+            if (btn) {
+                btn.classList.remove('active');
+                btn.setAttribute('title', 'Privacy Mode Off');
+            }
+            if (icon) {
+                icon.className = 'bx bx-lock-open-alt';
+            }
+            if (sw) sw.checked = false;
+        }
+        // Re-render stats and lists to apply masking
+        updatePersonalStats();
+    }
+
+    // Wire up privacy controls
+    const privacyBtn = document.getElementById('privacyToggleBtn');
+    if (privacyBtn) {
+        privacyBtn.addEventListener('click', togglePrivacyMode);
+    }
+    const privacySwitch = document.getElementById('privacyModeSwitch');
+    if (privacySwitch) {
+        privacySwitch.addEventListener('change', function() {
+            privacyMode = this.checked;
+            applyPrivacyMode();
+            savePrivacyMode(privacyMode);
+        });
+    }
+
     // Load existing flights from Supabase and add to calendar
     (async () => {
-        const flights = await fetchFlights();
-        flights.forEach(f => {
+        currentUser = await getCurrentUser();
+        if (!currentUser) {
+            console.warn('No user logged in.');
+        }
+
+        await Promise.all([
+            fetchFlights(),
+            fetchAircrafts(),
+            fetchReminders(),
+            fetchSettings()
+        ]);
+
+        currentFlights.forEach(f => {
             calendar.addEvent({
                 id: f.id,
                 title: `${f.havaAraci} - ${f.pilotlar}`,
@@ -158,6 +265,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 extendedProps: f
             });
         });
+
+        // Refresh UIs after data load
+        populateAircraftDatalist();
+        updateAircraftListUI();
+        populateRemindersUI();
+        refreshRemindersCalendar();
+        showReminderBannerIfAny();
+        if (window.updatePersonalStats) window.updatePersonalStats();
     })();
 
     // Form submission
@@ -375,47 +490,46 @@ function splitCsvRow(line) {
     return result.map(s => s.trim());
 }
 
-function handleImportArray(arr) {
+async function handleImportArray(arr) {
     if (!Array.isArray(arr) || !arr.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.importEmpty[lang]||window.translations.importEmpty.en); return; }
-    // validate objects
-    const key = storageKey();
-    const existing = JSON.parse(localStorage.getItem(key) || '[]');
-    const existingIds = new Set(existing.map(e => e.id));
-    const collisions = arr.filter(a => existingIds.has(a.id)).map(a => a.id);
-    let overwrite = true;
-    if (collisions.length) {
-        const lang = localStorage.getItem('app_lang')||'en';
-        const tmpl = window.translations.importCollisions && window.translations.importCollisions[lang] ? window.translations.importCollisions[lang] : window.translations.importCollisions.en;
-        overwrite = confirm(tmpl.replace('{n}', String(collisions.length)));
+    
+    if (!currentUser) {
+        alert('Please sign in to import data.');
+        return;
     }
-    // merge
-    const mergedMap = {};
-    existing.forEach(e => mergedMap[e.id] = e);
-    arr.forEach(a => {
+
+    let importedCount = 0;
+    for (const a of arr) {
         const item = {
-            id: a.id || Date.now().toString() + '_' + Math.random().toString(36).slice(2,8),
             havaAraci: a.havaAraci || a.hava || '',
             pilotlar: a.pilotlar || a.pilot || a.pilots || '',
             sure: a.sure || a.s || '',
             kalkis: a.kalkis || a.from || '',
             inis: a.inis || a.to || '',
-            tarih: a.tarih || a.date || ''
+            tarih: a.tarih || a.date || '',
+            ucusTipi: a.ucusTipi || '',
+            ucusZamani: a.ucusZamani || '',
+            nightVision: !!a.nightVision,
+            ucusNotu: a.ucusNotu || ''
         };
-        if (mergedMap[item.id]) {
-            if (overwrite) mergedMap[item.id] = item; // replace
-            // else skip
-        } else mergedMap[item.id] = item;
-    });
-    const merged = Object.keys(mergedMap).map(k => mergedMap[k]);
-    localStorage.setItem(key, JSON.stringify(merged));
-    // refresh calendar
-    if (window.calendar) {
-        window.calendar.removeAllEvents();
-        getUcuslar().forEach(ev => window.calendar.addEvent(ev));
+        
+        const saved = await insertFlight(item);
+        if (saved) {
+            importedCount++;
+            if (window.calendar) {
+                window.calendar.addEvent({
+                    id: saved.id,
+                    title: `${saved.havaAraci} - ${saved.pilotlar}`,
+                    start: saved.tarih,
+                    extendedProps: saved
+                });
+            }
+        }
     }
-    const lang = localStorage.getItem('app_lang')||'en';
-    alert(window.translations.importSuccess[lang]||window.translations.importSuccess.en);
+    
     if (window.updatePersonalStats) window.updatePersonalStats();
+    const lang = localStorage.getItem('app_lang')||'en';
+    alert((window.translations.importSuccess[lang]||window.translations.importSuccess.en) + ` (${importedCount})`);
 }
 
 function downloadFile(content, filename, mime) {
@@ -455,38 +569,59 @@ function formatDateEnglish(dateStr) {
     }
 }
 
-// ---------- Aircraft list helpers (per-storage-key) ----------
-function aircraftStorageKey() {
-    return storageKey() + '_aircrafts';
+// ---------- Aircraft list helpers (Supabase) ----------
+async function fetchAircrafts() {
+    if (!currentUser) return [];
+    try {
+        const { data, error } = await supabase.from('aircrafts').select('*');
+        if (error) throw error;
+        currentAircrafts = data || [];
+        return currentAircrafts;
+    } catch (e) {
+        console.error('fetchAircrafts error:', e);
+        return [];
+    }
 }
 
 function getAircrafts() {
-    try {
-        return JSON.parse(localStorage.getItem(aircraftStorageKey()) || '[]');
-    } catch (e) { return []; }
+    return currentAircrafts.map(a => a.name);
 }
 
-function saveAircraft(name) {
-    if (!name) return;
+async function saveAircraft(name) {
+    if (!name || !currentUser) return;
     const n = String(name).trim();
     if (!n) return;
-    const key = aircraftStorageKey();
-    const arr = JSON.parse(localStorage.getItem(key) || '[]');
-    if (!arr.includes(n)) {
-        arr.push(n);
-        localStorage.setItem(key, JSON.stringify(arr));
+    // check if exists in memory
+    if (currentAircrafts.find(a => a.name === n)) return;
+
+    try {
+        const { data, error } = await supabase.from('aircrafts').insert({
+            user_id: currentUser.id,
+            name: n
+        }).select('*').single();
+        if (error) throw error;
+        currentAircrafts.push(data);
+        populateAircraftDatalist();
+        updateAircraftListUI();
+    } catch (e) {
+        console.error('saveAircraft error:', e);
     }
-    populateAircraftDatalist();
-    updateAircraftListUI();
 }
 
-function deleteAircraft(name) {
-    const key = aircraftStorageKey();
-    let arr = JSON.parse(localStorage.getItem(key) || '[]');
-    arr = arr.filter(a => a !== name);
-    localStorage.setItem(key, JSON.stringify(arr));
-    populateAircraftDatalist();
-    updateAircraftListUI();
+async function deleteAircraft(name) {
+    if (!name || !currentUser) return;
+    const found = currentAircrafts.find(a => a.name === name);
+    if (!found) return;
+
+    try {
+        const { error } = await supabase.from('aircrafts').delete().eq('id', found.id);
+        if (error) throw error;
+        currentAircrafts = currentAircrafts.filter(a => a.id !== found.id);
+        populateAircraftDatalist();
+        updateAircraftListUI();
+    } catch (e) {
+        console.error('deleteAircraft error:', e);
+    }
 }
 
 function populateAircraftDatalist() {
@@ -701,7 +836,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         chart_all: { en: 'All Flight Types' },
         chart_day: { en: 'Day Flights' },
-        chart_night: { en: 'Night Flights' }
+        chart_night: { en: 'Night Flights' },
+        chart_pilot: { en: 'All Pilots Type' },
+        pilot_role_pilot: { en: 'Pilot' },
+        pilot_role_first_officer: { en: 'First Officer' },
+        pilot_role_instructor: { en: 'Instructor' },
+        privacyModeLabel: { en: 'Privacy Mode' },
+        privacyModeHint: { en: '(Hide sensitive flight hours)' }
     };
 
     // map legacy/other labels to canonical keys
@@ -776,31 +917,90 @@ document.addEventListener('DOMContentLoaded', function() {
     // App is English-only. Use 'en' as saved language and apply translations.
     const savedLang = 'en';
     applyTranslations(savedLang);
-    // populate aircraft datalist and personal UI on load
-    populateAircraftDatalist();
-    updateAircraftListUI();
 
-    // --- Reminders / Hatırlatmalar feature
-    function remindersStorageKey() { return storageKey() + '_reminders'; }
+    // --- Reminders / Hatırlatmalar feature (Supabase)
+    async function fetchReminders() {
+        if (!currentUser) return [];
+        try {
+            const { data, error } = await supabase.from('reminders').select('*');
+            if (error) throw error;
+            currentReminders = (data || []).map(r => ({
+                id: r.id,
+                havaAraci: r.aircraft,
+                pilotlar: r.pilot_role,
+                tarih: r.reminder_date,
+                note: r.note,
+                seen: r.seen
+            }));
+            return currentReminders;
+        } catch (e) {
+            console.error('fetchReminders error:', e);
+            return [];
+        }
+    }
+
     function getReminders() {
-        try { return JSON.parse(localStorage.getItem(remindersStorageKey()) || '[]'); } catch(e) { return []; }
+        return currentReminders;
     }
-    function saveReminderObj(r) {
-        const key = remindersStorageKey();
-        const arr = JSON.parse(localStorage.getItem(key) || '[]');
-        if (!r.id) r.id = Date.now().toString() + '_' + Math.random().toString(36).slice(2,6);
-        // ensure ISO date
-        try { r.tarih = new Date(r.tarih).toISOString(); } catch(e) {}
-        const idx = arr.findIndex(x => x.id === r.id);
-        if (idx > -1) arr[idx] = r; else arr.push(r);
-        localStorage.setItem(key, JSON.stringify(arr));
+
+    async function saveReminderObj(r) {
+        if (!currentUser) return;
+        const payload = {
+            user_id: currentUser.id,
+            aircraft: r.havaAraci || '',
+            pilot_role: r.pilotlar || '',
+            reminder_date: r.tarih,
+            note: r.note || '',
+            seen: !!r.seen
+        };
+        
+        try {
+            // Check if ID is a valid UUID (Supabase ID)
+            const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+            
+            if (r.id && isUUID(r.id)) {
+                const { data, error } = await supabase.from('reminders').update(payload).eq('id', r.id).select('*').single();
+                if (error) throw error;
+                const idx = currentReminders.findIndex(x => x.id === r.id);
+                if (idx > -1) {
+                    currentReminders[idx] = {
+                        id: data.id,
+                        havaAraci: data.aircraft,
+                        pilotlar: data.pilot_role,
+                        tarih: data.reminder_date,
+                        note: data.note,
+                        seen: data.seen
+                    };
+                }
+            } else {
+                const { data, error } = await supabase.from('reminders').insert(payload).select('*').single();
+                if (error) throw error;
+                const newR = {
+                    id: data.id,
+                    havaAraci: data.aircraft,
+                    pilotlar: data.pilot_role,
+                    tarih: data.reminder_date,
+                    note: data.note,
+                    seen: data.seen
+                };
+                currentReminders.push(newR);
+            }
+        } catch (e) {
+            console.error('saveReminderObj error:', e);
+        }
     }
-    function deleteReminder(id) {
-        const key = remindersStorageKey();
-        let arr = JSON.parse(localStorage.getItem(key) || '[]');
-        arr = arr.filter(a => a.id !== id);
-        localStorage.setItem(key, JSON.stringify(arr));
-        populateRemindersUI();
+
+    async function deleteReminder(id) {
+        if (!id || !currentUser) return;
+        try {
+            const { error } = await supabase.from('reminders').delete().eq('id', id);
+            if (error) throw error;
+            currentReminders = currentReminders.filter(r => r.id !== id);
+            populateRemindersUI();
+            if (window.refreshRemindersCalendar) window.refreshRemindersCalendar();
+        } catch (e) {
+            console.error('deleteReminder error:', e);
+        }
     }
 
     function populateRemindersUI() {
@@ -869,10 +1069,10 @@ document.addEventListener('DOMContentLoaded', function() {
             button.setAttribute('aria-label', (window.translations.reminderDismiss && window.translations.reminderDismiss[lang]) || window.translations.reminderDismiss.en || 'Dismiss');
             button.addEventListener('click', function(){
                 // mark these reminders as seen so they won't reappear
-                const all = getReminders();
-                const ids = new Set(toShow.map(t => t.id));
-                const updated = all.map(a => ids.has(a.id) ? Object.assign({}, a, { seen: true }) : a);
-                localStorage.setItem(remindersStorageKey(), JSON.stringify(updated));
+                toShow.forEach(r => {
+                    r.seen = true;
+                    saveReminderObj(r);
+                });
                 // remove banner
                 try { bootstrap.Alert && bootstrap.Alert.getOrCreateInstance(alert).close(); } catch(e){ alert.remove(); }
                 // refresh UI list
@@ -921,6 +1121,12 @@ document.addEventListener('DOMContentLoaded', function() {
             remindersCalendar = new FullCalendar.Calendar(el, {
                 initialView: 'dayGridMonth',
                 headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
+                buttonText: {
+                    today: 'Today',
+                    month: 'Month',
+                    week: 'Week',
+                    day: 'Day'
+                },
                 locale: (lang === 'tr' ? 'tr' : (lang === 'es' ? 'es' : 'en')),
                 events: getReminders().map(r => ({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }))
             });
@@ -936,9 +1142,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // initial populate and banner check
-    populateRemindersUI();
     initRemindersCalendar();
-    showReminderBannerIfAny();
     // expose refresh for other handlers
     window.refreshRemindersCalendar = refreshRemindersCalendar;
     // make available globally and refresh on language change too
@@ -946,27 +1150,44 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Demo verileri yükle
     const demoLoad = document.getElementById('demoVeriYukle');
-    demoLoad && demoLoad.addEventListener('click', function() {
-        const now = Date.now();
+    demoLoad && demoLoad.addEventListener('click', async function() {
         const demo = [
-            { id: (now+1).toString(), havaAraci: 'Cessna 182', pilotlar: 'Pilot A', sure: '2', kalkis: 'IST', inis: 'ANK', tarih: new Date().toISOString().slice(0,16) },
-            { id: (now+2).toString(), havaAraci: 'Piper PA-28', pilotlar: 'Pilot B', sure: '1.2', kalkis: 'ESB', inis: 'IZM', tarih: new Date(Date.now()+86400000).toISOString().slice(0,16) }
+            { havaAraci: 'Cessna 182', pilotlar: 'Pilot A', sure: '2', kalkis: 'IST', inis: 'ANK', tarih: new Date().toISOString().slice(0,16) },
+            { havaAraci: 'Piper PA-28', pilotlar: 'Pilot B', sure: '1.2', kalkis: 'ESB', inis: 'IZM', tarih: new Date(Date.now()+86400000).toISOString().slice(0,16) }
         ];
-        demo.forEach(d => {
-            updateUcus(d);
-            if (window.calendar) window.calendar.addEvent({ id: d.id, title: `${d.havaAraci} - ${d.pilotlar}`, start: d.tarih, extendedProps: d });
+        for (const d of demo) {
+            const saved = await insertFlight(d);
+            if (saved && window.calendar) {
+                window.calendar.addEvent({
+                    id: saved.id,
+                    title: `${saved.havaAraci} - ${saved.pilotlar}`,
+                    start: saved.tarih,
+                    extendedProps: saved
+                });
+            }
             // ensure aircraft list includes demo items
-            saveAircraft(d.havaAraci);
-        });
+            if (d.havaAraci) saveAircraft(d.havaAraci);
+        }
     });
 
     // Tüm verileri temizle
     const clearBtn = document.getElementById('veriTemizle');
-    clearBtn && clearBtn.addEventListener('click', function() {
+    clearBtn && clearBtn.addEventListener('click', async function() {
         const lang = localStorage.getItem('app_lang')||'en';
         if (!confirm(window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en)) return;
-        localStorage.removeItem('ucuslar');
+        
+        if (currentUser) {
+            const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
+            if (error) {
+                console.error('Clear data error:', error);
+                alert('Failed to clear data.');
+                return;
+            }
+        }
+        currentFlights = [];
         if (window.calendar) window.calendar.removeAllEvents();
+        updatePersonalStats();
+        alert(window.translations.recordsDeleted[lang]||window.translations.recordsDeleted.en);
     });
 
     // Export / Import handlers (CSV / JSON)
@@ -975,14 +1196,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const importFileInput = document.getElementById('importFile');
 
     exportCsvBtn && exportCsvBtn.addEventListener('click', function() {
-        const events = JSON.parse(localStorage.getItem(storageKey()) || '[]');
+        const events = currentFlights;
     if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
         const csv = toCSV(events);
         downloadFile(csv, 'pilot_ucuslar.csv', 'text/csv;charset=utf-8;');
     });
 
     exportJsonBtn && exportJsonBtn.addEventListener('click', function() {
-        const events = JSON.parse(localStorage.getItem(storageKey()) || '[]');
+        const events = currentFlights;
     if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
         const json = JSON.stringify(events, null, 2);
         downloadFile(json, 'pilot_ucuslar.json', 'application/json');
@@ -1018,6 +1239,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let flightChart = null;
     let dayChart = null;
     let nightChart = null;
+    let pilotChart = null;
     function updatePersonalStats() {
         try {
             console.debug('updatePersonalStats: starting');
@@ -1033,6 +1255,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const typeSums = {}; // hours per flight type (all)
             const typeSumsDay = {}; // hours per type for day flights
             const typeSumsNight = {}; // hours per type for night flights
+            const pilotSums = {}; // hours per pilot role
             raw.forEach(u => {
                 const sure = parseFloat(u.sure || u.ucusSuresi || 0) || 0;
                 const tarih = u.tarih ? new Date(u.tarih) : null;
@@ -1043,6 +1266,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 // normalize type key (store canonical keys like 'egitim')
                 const tipKey = normalizeTypeKey(u.ucusTipi || u.tip || '');
                 typeSums[tipKey] = (typeSums[tipKey] || 0) + sure;
+
+                // aggregate pilot role
+                const roleKey = u.pilotlar || 'unknown';
+                pilotSums[roleKey] = (pilotSums[roleKey] || 0) + sure;
 
                 // determine if this flight is night or day
                 let isNight = false;
@@ -1062,9 +1289,51 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
 
-            document.getElementById('weeklyFlightHours').textContent = weekly.toFixed(1);
-            document.getElementById('monthlyFlightHours').textContent = monthly.toFixed(1);
-            document.getElementById('totalFlightHours').textContent = total.toFixed(1);
+            document.getElementById('weeklyFlightHours').textContent = privacyMode ? '••••' : weekly.toFixed(1);
+            document.getElementById('monthlyFlightHours').textContent = privacyMode ? '••••' : monthly.toFixed(1);
+            document.getElementById('totalFlightHours').textContent = privacyMode ? '••••' : total.toFixed(1);
+
+            // If privacy mode is active, hide charts and show placeholder
+            const chartContainers = [
+                'flightPieChart', 'pilotPieChart', 'flightDayChart', 'flightNightChart'
+            ];
+            
+            if (privacyMode) {
+                chartContainers.forEach(id => {
+                    const canvas = document.getElementById(id);
+                    if (canvas) {
+                        canvas.style.display = 'none';
+                        // Check if placeholder exists, if not create it
+                        let placeholder = canvas.parentElement.querySelector('.privacy-placeholder-card');
+                        if (!placeholder) {
+                            placeholder = document.createElement('div');
+                            placeholder.className = 'privacy-placeholder-card';
+                            placeholder.innerHTML = '<i class="bx bx-lock-alt"></i><div>Privacy Mode Active<br><small>Charts Hidden</small></div>';
+                            canvas.parentElement.insertBefore(placeholder, canvas);
+                        } else {
+                            placeholder.style.display = 'flex';
+                        }
+                    }
+                });
+                // Also hide the breakdown list
+                const statsEl = document.getElementById('flightTypeStats');
+                if (statsEl) statsEl.innerHTML = '<div class="text-center text-muted py-3"><i class="bx bx-lock-alt"></i> Hidden</div>';
+            } else {
+                // Show canvases, hide placeholders
+                chartContainers.forEach(id => {
+                    const canvas = document.getElementById(id);
+                    if (canvas) {
+                        canvas.style.display = '';
+                        const placeholder = canvas.parentElement.querySelector('.privacy-placeholder-card');
+                        if (placeholder) placeholder.style.display = 'none';
+                    }
+                });
+            }
+
+            if (privacyMode) {
+                // Skip chart rendering if privacy mode is on
+                return;
+            }
 
             const labels = Object.keys(typeSums);
             const data = labels.map(l => typeSums[l]);
@@ -1112,6 +1381,54 @@ document.addEventListener('DOMContentLoaded', function() {
                             datasets: [{
                                 data: chartData,
                                 backgroundColor: chartBg
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: { position: 'bottom', labels: { color: '#fff' } },
+                                tooltip: { mode: 'index' }
+                            }
+                        }
+                    });
+                }
+            }
+
+            // Pilot Chart
+            const pilotLabels = Object.keys(pilotSums);
+            const pilotData = pilotLabels.map(l => pilotSums[l]);
+            const pilotLabelsTranslated = pilotLabels.map(k => {
+                const tk = 'pilot_role_' + k;
+                return (window.translations[tk] && window.translations[tk][lang]) || k;
+            });
+            if (pilotLabels.length === 0) {
+                pilotLabels.push('bilinmiyor');
+                pilotData.push(0);
+                pilotLabelsTranslated.push(window.translations.noRecords ? window.translations.noRecords[lang] : (window.translations.noRecords && window.translations.noRecords.en) || 'No records');
+            }
+            const ctxPilot = document.getElementById('pilotPieChart') && document.getElementById('pilotPieChart').getContext('2d');
+            const pilotCanvas = document.getElementById('pilotPieChart');
+            const pilotSum = pilotData.reduce((s,v) => s + (parseFloat(v)||0), 0);
+            if (pilotCanvas) pilotCanvas.style.display = '';
+            const pilotNoLabel = (window.translations.noRecords && window.translations.noRecords[lang]) || (window.translations.noRecords && window.translations.noRecords.en) || 'No records';
+            const pilotChartLabels = (pilotSum === 0) ? [pilotNoLabel] : pilotLabelsTranslated;
+            const pilotChartData = (pilotSum === 0) ? [1] : pilotData;
+            const pilotChartBg = (pilotSum === 0) ? [colors[0]] : pilotLabels.map((_,i) => colors[i % colors.length]);
+
+            if (ctxPilot) {
+                if (pilotChart) {
+                    pilotChart.data.labels = pilotChartLabels;
+                    pilotChart.data.datasets[0].data = pilotChartData;
+                    pilotChart.data.datasets[0].backgroundColor = pilotChartBg;
+                    pilotChart.update();
+                } else {
+                    pilotChart = new Chart(ctxPilot, {
+                        type: 'pie',
+                        data: {
+                            labels: pilotChartLabels,
+                            datasets: [{
+                                data: pilotChartData,
+                                backgroundColor: pilotChartBg
                             }]
                         },
                         options: {
@@ -1221,7 +1538,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         const tipKey = normalizeTypeKey(u.ucusTipi || u.tip || '');
                         const tipLabel = (window.translations['type_' + tipKey] && window.translations['type_' + tipKey][lang]) || (u.ucusTipi || 'Unknown');
                         const hourText = (window.translations.hours && window.translations.hours[lang]) || 'hrs';
-                        d.innerHTML = `<div><strong>${u.havaAraci || '—'}</strong> — ${u.pilotlar || '—'}</div><div class="small text-muted">Duration: ${parseFloat(u.sure||0).toFixed(1)} ${hourText} • ${when} • Type: ${tipLabel}</div>`;
+                        
+                        let durationDisplay = parseFloat(u.sure||0).toFixed(1);
+                        let blurClass = '';
+                        if (privacyMode) {
+                            durationDisplay = '•••';
+                            blurClass = 'private-blur';
+                        }
+
+                        d.innerHTML = `<div><strong>${u.havaAraci || '—'}</strong> — ${u.pilotlar || '—'}</div><div class="small text-muted"><span class="${blurClass}">Duration: ${durationDisplay} ${hourText}</span> • ${when} • Type: ${tipLabel}</div>`;
                         listEl.appendChild(d);
                     });
                 }
@@ -1267,6 +1592,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             // e.target is the newly activated tab trigger element
             if (e && e.target && e.target.id === 'personal-tab') {
+
                 console.debug('document shown.bs.tab event for personal-tab detected');
                 // small delay to ensure layout is visible
                 setTimeout(updatePersonalStats, 120);
@@ -1277,10 +1603,19 @@ document.addEventListener('DOMContentLoaded', function() {
     // clear personal data button
     const clearPersonalBtn = document.getElementById('clearPersonalData');
     if (clearPersonalBtn) {
-        clearPersonalBtn.addEventListener('click', function() {
+        clearPersonalBtn.addEventListener('click', async function() {
             const lang = localStorage.getItem('app_lang')||'en';
             if (!confirm(window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en)) return;
-            localStorage.removeItem(storageKey());
+            
+            if (currentUser) {
+                const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
+                if (error) {
+                    console.error('Clear data error:', error);
+                    alert('Failed to clear data.');
+                    return;
+                }
+            }
+            currentFlights = [];
             // refresh calendar and personal stats
             if (window.calendar) {
                 window.calendar.removeAllEvents();

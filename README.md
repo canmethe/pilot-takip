@@ -29,7 +29,7 @@ If you want to embed the app in Google Sites, use an iframe with the hosted `ind
 2. Open `index.html` in a browser or serve the folder with a simple HTTP server
 3. The app is ready to use
 
-## Usage
+## Usagep
 
 1. Use the "Add New Flight" form to enter flight information
 2. Saved flights appear on the calendar

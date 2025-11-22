@@ -58,6 +58,15 @@ create table if not exists public.reminders (
 create index if not exists reminders_user_id_idx on public.reminders(user_id);
 create index if not exists reminders_user_id_date_idx on public.reminders(user_id, reminder_date);
 
+-- User Settings table: stores user preferences like privacy mode
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  privacy_mode boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists user_settings_user_id_idx on public.user_settings(user_id);
+
 -- NOTE: RLS (Row Level Security) is intentionally NOT enabled here
 -- because you said it's not needed yet. Later you can enable RLS and
 -- add policies like:
