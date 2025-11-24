@@ -477,7 +477,7 @@ select.form-control option {
     box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
 }
 
-/* Privacy Mode Styles */
+/* Privacy Mode Styles. */
 .private-blur {
     filter: blur(6px);
     user-select: none;
