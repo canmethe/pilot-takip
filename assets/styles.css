@@ -540,6 +540,48 @@ select.form-control option {
     box-shadow: 0 0 10px rgba(0, 255, 149, 0.2);
 }
 
+/* Auth / Landing Page Styles */
+#authContainer {
+    background: radial-gradient(circle at 50% 50%, #1a252f 0%, #0f1219 100%);
+}
+
+#authContainer .card {
+    background: rgba(35, 40, 55, 0.8);
+    backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+
+#authContainer h2 {
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+#authContainer .form-control {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+#authContainer .form-control:focus {
+    background: rgba(0, 0, 0, 0.5);
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 0.25rem rgba(0, 255, 149, 0.1);
+}
+
+#landingLoginBtn {
+    background: linear-gradient(135deg, var(--accent-color) 0%, #00cc7a 100%);
+    color: #000;
+    font-weight: 700;
+    border: none;
+}
+
+#landingLoginBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0, 255, 149, 0.3);
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .container {

@@ -1,4 +1,4 @@
-import { supabase, getCurrentUser } from './supabaseClient.js';
+import { supabase, getCurrentUser, signUpEmail, signInEmail, signOut, onAuthStateChange } from './supabaseClient.js';
 
 let currentUser = null;
 let currentFlights = [];
@@ -38,8 +38,9 @@ function flightObjToPayload(ucus) {
 }
 
 async function fetchFlights() {
+    if (!currentUser) { currentFlights = []; return []; }
     try {
-        const { data, error } = await supabase.from('flights').select('*');
+        const { data, error } = await supabase.from('flights').select('*').eq('user_id', currentUser.id).order('flight_date', { ascending: false });
         if (error) {
             console.error('Supabase fetchFlights error:', error.message);
             return [];
@@ -160,36 +161,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Privacy Mode Logic
     async function fetchSettings() {
-        if (!currentUser) return;
-        try {
-            const { data, error } = await supabase.from('user_settings').select('privacy_mode').eq('user_id', currentUser.id).single();
-            if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
-                console.error('fetchSettings error:', error);
-            }
-            if (data) {
-                privacyMode = !!data.privacy_mode;
-            } else {
-                // default false
-                privacyMode = false;
-            }
-            applyPrivacyMode();
-        } catch (e) {
-            console.error('fetchSettings exception:', e);
-        }
+        // Feature disabled to prevent 404 errors until 'user_settings' table is created in Supabase
+        privacyMode = false;
+        applyPrivacyMode();
+        return Promise.resolve();
     }
 
     async function savePrivacyMode(val) {
-        if (!currentUser) return;
-        try {
-            const { error } = await supabase.from('user_settings').upsert({
-                user_id: currentUser.id,
-                privacy_mode: val,
-                updated_at: new Date().toISOString()
-            });
-            if (error) throw error;
-        } catch (e) {
-            console.error('savePrivacyMode error:', e);
-        }
+        // Feature disabled to prevent 404 errors until 'user_settings' table is created in Supabase
+        return Promise.resolve();
     }
 
     function togglePrivacyMode() {
@@ -243,11 +223,21 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Load existing flights from Supabase and add to calendar
-    (async () => {
-        currentUser = await getCurrentUser();
+    // --- Auth & Data Loading Logic ---
+    async function reloadUserData() {
+        // Clear calendar events first
+        if (window.calendar) {
+            try { window.calendar.removeAllEvents(); } catch (e) {}
+        }
+        
         if (!currentUser) {
-            console.warn('No user logged in.');
+            // Clear local data
+            currentFlights = [];
+            currentAircrafts = [];
+            currentReminders = [];
+            privacyMode = false;
+            updatePersonalStats();
+            return;
         }
 
         await Promise.all([
@@ -257,8 +247,9 @@ document.addEventListener('DOMContentLoaded', function() {
             fetchSettings()
         ]);
 
+        // Re-add flights to calendar
         currentFlights.forEach(f => {
-            calendar.addEvent({
+            window.calendar && window.calendar.addEvent({
                 id: f.id,
                 title: `${f.havaAraci} - ${f.pilotlar}`,
                 start: f.tarih,
@@ -266,14 +257,165 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
 
-        // Refresh UIs after data load
+        // Refresh UIs
         populateAircraftDatalist();
         updateAircraftListUI();
         populateRemindersUI();
         refreshRemindersCalendar();
         showReminderBannerIfAny();
         if (window.updatePersonalStats) window.updatePersonalStats();
+    }
+
+    function updateAuthView() {
+        const authContainer = document.getElementById('authContainer');
+        const appContainer = document.getElementById('appContainer');
+        
+        console.log('updateAuthView called. User:', currentUser ? currentUser.email : 'null');
+
+        if (currentUser) {
+            if (authContainer) {
+                // Force hide with !important to override any CSS specificity issues
+                authContainer.style.setProperty('display', 'none', 'important');
+                console.log('Hiding authContainer (forced)');
+            }
+            if (appContainer) {
+                appContainer.style.display = 'block';
+                console.log('Showing appContainer');
+            }
+            // Trigger a resize for calendar/charts since they were hidden
+            setTimeout(() => {
+                window.dispatchEvent(new Event('resize'));
+                if (window.calendar) window.calendar.render();
+            }, 100);
+        } else {
+            if (authContainer) {
+                authContainer.style.display = 'flex';
+                console.log('Showing authContainer');
+            }
+            if (appContainer) {
+                appContainer.style.display = 'none';
+                console.log('Hiding appContainer');
+            }
+        }
+    }
+
+    // Initial load
+    (async () => {
+        try {
+            currentUser = await getCurrentUser();
+            console.log('Initial load: currentUser is', currentUser);
+            updateAuthView();
+            if (currentUser) {
+                await reloadUserData();
+            }
+        } catch (err) {
+            console.error('Initial load error:', err);
+        }
     })();
+
+    // Auth State Listener
+    onAuthStateChange(async (user) => {
+        currentUser = user;
+        updateAuthView();
+        await reloadUserData();
+    });
+
+    // Auth Event Listeners
+    let isSignupMode = false;
+    const authForm = document.getElementById('authForm');
+    const authToggleLink = document.getElementById('authToggleLink');
+    const authTitle = document.getElementById('authTitle');
+    const confirmPassContainer = document.getElementById('confirmPasswordContainer');
+    const landingSubmitBtn = document.getElementById('landingSubmitBtn');
+    const landingMsg = document.getElementById('landingMessage');
+    const mainSignOutBtn = document.getElementById('mainSignOutBtn');
+
+    if (authToggleLink) {
+        authToggleLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            isSignupMode = !isSignupMode;
+            if (isSignupMode) {
+                authTitle.textContent = 'Create a new account';
+                confirmPassContainer.style.display = 'block';
+                landingSubmitBtn.textContent = 'Sign Up';
+                landingSubmitBtn.classList.remove('btn-primary');
+                landingSubmitBtn.classList.add('btn-success');
+                authToggleLink.textContent = 'Already have an account? Log In';
+                if(landingMsg) landingMsg.textContent = '';
+            } else {
+                authTitle.textContent = 'Log in to access your flight logbook';
+                confirmPassContainer.style.display = 'none';
+                landingSubmitBtn.textContent = 'Log In';
+                landingSubmitBtn.classList.remove('btn-success');
+                landingSubmitBtn.classList.add('btn-primary');
+                authToggleLink.textContent = "Don't have an account? Sign Up";
+                if(landingMsg) landingMsg.textContent = '';
+            }
+        });
+    }
+
+    if (authForm) {
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('landingEmail').value.trim();
+            const pass = document.getElementById('landingPassword').value.trim();
+            
+            if (!email || !pass) {
+                if(landingMsg) landingMsg.textContent = 'Please enter email and password.';
+                return;
+            }
+
+            if (isSignupMode) {
+                const confirmPass = document.getElementById('landingConfirmPassword').value.trim();
+                if (pass !== confirmPass) {
+                    if(landingMsg) landingMsg.textContent = 'Passwords do not match.';
+                    return;
+                }
+                
+                if(landingMsg) landingMsg.textContent = 'Signing up...';
+                try {
+                    await signUpEmail(email, pass);
+                    if(landingMsg) {
+                        landingMsg.className = 'mt-3 text-center small text-success';
+                        landingMsg.textContent = 'Success! Check your email to confirm account.';
+                    }
+                } catch (err) {
+                    if(landingMsg) {
+                        landingMsg.className = 'mt-3 text-center small text-danger';
+                        landingMsg.textContent = err.message;
+                    }
+                }
+            } else {
+                if(landingMsg) landingMsg.textContent = 'Logging in...';
+                console.log('Starting login process for:', email);
+                try {
+                    const user = await signInEmail(email, pass);
+                    console.log('Login returned user:', user);
+                    if (user) {
+                        currentUser = user;
+                        if(landingMsg) landingMsg.textContent = 'Login successful! Redirecting...';
+                        updateAuthView();
+                        await reloadUserData();
+                    } else {
+                        console.warn('Login succeeded but no user object returned.');
+                        if(landingMsg) landingMsg.textContent = 'Login failed (no user returned).';
+                    }
+                } catch (err) {
+                    console.error('Login error:', err);
+                    if(landingMsg) {
+                        landingMsg.className = 'mt-3 text-center small text-danger';
+                        landingMsg.textContent = err.message;
+                    }
+                }
+            }
+        });
+    }
+
+    if (mainSignOutBtn) mainSignOutBtn.addEventListener('click', async () => {
+        if(confirm('Sign out?')) {
+            try { await signOut(); } catch(e){ alert(e.message); }
+        }
+    });
 
     // Form submission
     document.getElementById('ucusForm').addEventListener('submit', function(e) {
@@ -571,9 +713,9 @@ function formatDateEnglish(dateStr) {
 
 // ---------- Aircraft list helpers (Supabase) ----------
 async function fetchAircrafts() {
-    if (!currentUser) return [];
+    if (!currentUser) { currentAircrafts = []; return []; }
     try {
-        const { data, error } = await supabase.from('aircrafts').select('*');
+        const { data, error } = await supabase.from('aircrafts').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false });
         if (error) throw error;
         currentAircrafts = data || [];
         return currentAircrafts;
@@ -585,6 +727,206 @@ async function fetchAircrafts() {
 
 function getAircrafts() {
     return currentAircrafts.map(a => a.name);
+}
+
+// --- Reminders / Hatırlatmalar feature (Supabase) ---
+async function fetchReminders() {
+    if (!currentUser) { currentReminders = []; return []; }
+    try {
+        const { data, error } = await supabase.from('reminders').select('*').eq('user_id', currentUser.id).order('reminder_date', { ascending: true });
+        if (error) throw error;
+        currentReminders = (data || []).map(r => ({
+            id: r.id,
+            havaAraci: r.aircraft,
+            pilotlar: r.pilot_role,
+            tarih: r.reminder_date,
+            note: r.note,
+            seen: r.seen
+        }));
+        return currentReminders;
+    } catch (e) {
+        console.error('fetchReminders error:', e);
+        return [];
+    }
+}
+
+function getReminders() {
+    return currentReminders;
+}
+
+async function saveReminderObj(r) {
+    if (!currentUser) return;
+    const payload = {
+        user_id: currentUser.id,
+        aircraft: r.havaAraci || '',
+        pilot_role: r.pilotlar || '',
+        reminder_date: r.tarih,
+        note: r.note || '',
+        seen: !!r.seen
+    };
+    
+    try {
+        // Check if ID is a valid UUID (Supabase ID)
+        const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        
+        if (r.id && isUUID(r.id)) {
+            const { data, error } = await supabase.from('reminders').update(payload).eq('id', r.id).select('*').single();
+            if (error) throw error;
+            const idx = currentReminders.findIndex(x => x.id === r.id);
+            if (idx > -1) {
+                currentReminders[idx] = {
+                    id: data.id,
+                    havaAraci: data.aircraft,
+                    pilotlar: data.pilot_role,
+                    tarih: data.reminder_date,
+                    note: data.note,
+                    seen: data.seen
+                };
+            }
+        } else {
+            const { data, error } = await supabase.from('reminders').insert(payload).select('*').single();
+            if (error) throw error;
+            const newR = {
+                id: data.id,
+                havaAraci: data.aircraft,
+                pilotlar: data.pilot_role,
+                tarih: data.reminder_date,
+                note: data.note,
+                seen: data.seen
+            };
+            currentReminders.push(newR);
+        }
+    } catch (e) {
+        console.error('saveReminderObj error:', e);
+    }
+}
+
+async function deleteReminder(id) {
+    if (!id || !currentUser) return;
+    try {
+        const { error } = await supabase.from('reminders').delete().eq('id', id);
+        if (error) throw error;
+        currentReminders = currentReminders.filter(r => r.id !== id);
+        populateRemindersUI();
+        if (window.refreshRemindersCalendar) window.refreshRemindersCalendar();
+    } catch (e) {
+        console.error('deleteReminder error:', e);
+    }
+}
+
+function populateRemindersUI() {
+    const el = document.getElementById('remindersList');
+    if (!el) return;
+    const arr = getReminders();
+    const lang = localStorage.getItem('app_lang')||'en';
+    el.innerHTML = '';
+    if (!arr.length) {
+        const txt = (window.translations.reminders_none && window.translations.reminders_none[lang]) || window.translations.reminders_none.en || 'No reminders.';
+        el.innerHTML = `<div class="small text-muted">${txt}</div>`;
+        return;
+    }
+    arr.sort((a,b)=> new Date(a.tarih) - new Date(b.tarih));
+    arr.forEach(r => {
+        const row = document.createElement('div');
+        row.className = 'd-flex justify-content-between align-items-start py-2 border-bottom';
+        const left = document.createElement('div');
+        const when = r.tarih ? formatDateEnglish(r.tarih) : (window.translations.noDate ? window.translations.noDate[lang] : 'No date');
+        left.innerHTML = `<div><strong>${r.havaAraci || '—'}</strong> — ${r.pilotlar || '—'}</div><div class="small text-muted">${when}</div>`;
+        const right = document.createElement('div');
+        const del = document.createElement('button');
+        del.className = 'btn btn-sm btn-outline-danger ms-2';
+        const delLang = localStorage.getItem('app_lang')||'en';
+        del.textContent = (window.translations.deleteFlight && (window.translations.deleteFlight[delLang] || window.translations.deleteFlight['en'])) || 'Delete';
+        del.addEventListener('click', function(){ if (confirm((window.translations && window.translations.confirmDeleteFlight) ? (window.translations.confirmDeleteFlight[localStorage.getItem('app_lang')||'en'] || window.translations.confirmDeleteFlight.en) : 'Delete?')) deleteReminder(r.id); });
+        right.appendChild(del);
+        row.appendChild(left);
+        row.appendChild(right);
+        el.appendChild(row);
+    });
+}
+
+function showReminderBannerIfAny() {
+    try {
+        const container = document.getElementById('reminderBannerContainer');
+        if (!container) return;
+        container.innerHTML = '';
+        const arr = getReminders();
+        if (!arr.length) return;
+        const now = new Date();
+        const tomorrow = new Date(now); tomorrow.setDate(now.getDate()+1); tomorrow.setHours(0,0,0,0);
+        const lang = localStorage.getItem('app_lang')||'en';
+        const toShow = arr.filter(r => {
+            if (r.seen) return false;
+            const d = r.tarih ? new Date(r.tarih) : null;
+            if (!d) return false;
+            // compare by date (local)
+            const dLocal = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            return dLocal.getTime() === tomorrow.getTime();
+        });
+        if (!toShow.length) return;
+        // build banner
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning alert-dismissible fade show';
+        alert.setAttribute('role','alert');
+        const title = (window.translations.reminderTomorrowMsg && window.translations.reminderTomorrowMsg[lang]) || window.translations.reminderTomorrowMsg.en || 'Tomorrow you have a flight.';
+        const listHtml = toShow.map(r => {
+            const when = r.tarih ? formatDateEnglish(r.tarih) : '';
+            return `<div><strong>${r.havaAraci || ''}</strong> — ${r.pilotlar || ''} • <small>${when}</small></div>`;
+        }).join('');
+        alert.innerHTML = `<div><strong>${title}</strong></div><div class="mt-1">${listHtml}</div>`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-close';
+        button.setAttribute('aria-label', (window.translations.reminderDismiss && window.translations.reminderDismiss[lang]) || window.translations.reminderDismiss.en || 'Dismiss');
+        button.addEventListener('click', function(){
+            // mark these reminders as seen so they won't reappear
+            toShow.forEach(r => {
+                r.seen = true;
+                saveReminderObj(r);
+            });
+            // remove banner
+            try { bootstrap.Alert && bootstrap.Alert.getOrCreateInstance(alert).close(); } catch(e){ alert.remove(); }
+            // refresh UI list
+            populateRemindersUI();
+        });
+        alert.appendChild(button);
+        container.appendChild(alert);
+    } catch (err) { console.error('showReminderBannerIfAny error', err); }
+}
+
+let remindersCalendar = null;
+function initRemindersCalendar() {
+    try {
+        const el = document.getElementById('remindersCalendar');
+        if (!el || typeof FullCalendar === 'undefined') return;
+        // destroy existing
+        if (remindersCalendar) {
+            try { remindersCalendar.destroy(); } catch(e){}
+            remindersCalendar = null;
+        }
+        const lang = localStorage.getItem('app_lang') || 'en';
+        remindersCalendar = new FullCalendar.Calendar(el, {
+            initialView: 'dayGridMonth',
+            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
+            buttonText: {
+                today: 'Today',
+                month: 'Month',
+                week: 'Week',
+                day: 'Day'
+            },
+            locale: (lang === 'tr' ? 'tr' : (lang === 'es' ? 'es' : 'en')),
+            events: getReminders().map(r => ({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }))
+        });
+        remindersCalendar.render();
+    } catch (err) { console.error('initRemindersCalendar error', err); }
+}
+
+function refreshRemindersCalendar() {
+    try {
+        if (!remindersCalendar) { initRemindersCalendar(); return; }
+        remindersCalendar.removeAllEvents();
+        getReminders().forEach(r => remindersCalendar.addEvent({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }));
+    } catch (err) { console.error('refreshRemindersCalendar error', err); initRemindersCalendar(); }
 }
 
 async function saveAircraft(name) {
@@ -918,170 +1260,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const savedLang = 'en';
     applyTranslations(savedLang);
 
-    // --- Reminders / Hatırlatmalar feature (Supabase)
-    async function fetchReminders() {
-        if (!currentUser) return [];
-        try {
-            const { data, error } = await supabase.from('reminders').select('*');
-            if (error) throw error;
-            currentReminders = (data || []).map(r => ({
-                id: r.id,
-                havaAraci: r.aircraft,
-                pilotlar: r.pilot_role,
-                tarih: r.reminder_date,
-                note: r.note,
-                seen: r.seen
-            }));
-            return currentReminders;
-        } catch (e) {
-            console.error('fetchReminders error:', e);
-            return [];
-        }
-    }
 
-    function getReminders() {
-        return currentReminders;
-    }
-
-    async function saveReminderObj(r) {
-        if (!currentUser) return;
-        const payload = {
-            user_id: currentUser.id,
-            aircraft: r.havaAraci || '',
-            pilot_role: r.pilotlar || '',
-            reminder_date: r.tarih,
-            note: r.note || '',
-            seen: !!r.seen
-        };
-        
-        try {
-            // Check if ID is a valid UUID (Supabase ID)
-            const isUUID = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
-            
-            if (r.id && isUUID(r.id)) {
-                const { data, error } = await supabase.from('reminders').update(payload).eq('id', r.id).select('*').single();
-                if (error) throw error;
-                const idx = currentReminders.findIndex(x => x.id === r.id);
-                if (idx > -1) {
-                    currentReminders[idx] = {
-                        id: data.id,
-                        havaAraci: data.aircraft,
-                        pilotlar: data.pilot_role,
-                        tarih: data.reminder_date,
-                        note: data.note,
-                        seen: data.seen
-                    };
-                }
-            } else {
-                const { data, error } = await supabase.from('reminders').insert(payload).select('*').single();
-                if (error) throw error;
-                const newR = {
-                    id: data.id,
-                    havaAraci: data.aircraft,
-                    pilotlar: data.pilot_role,
-                    tarih: data.reminder_date,
-                    note: data.note,
-                    seen: data.seen
-                };
-                currentReminders.push(newR);
-            }
-        } catch (e) {
-            console.error('saveReminderObj error:', e);
-        }
-    }
-
-    async function deleteReminder(id) {
-        if (!id || !currentUser) return;
-        try {
-            const { error } = await supabase.from('reminders').delete().eq('id', id);
-            if (error) throw error;
-            currentReminders = currentReminders.filter(r => r.id !== id);
-            populateRemindersUI();
-            if (window.refreshRemindersCalendar) window.refreshRemindersCalendar();
-        } catch (e) {
-            console.error('deleteReminder error:', e);
-        }
-    }
-
-    function populateRemindersUI() {
-        const el = document.getElementById('remindersList');
-        if (!el) return;
-        const arr = getReminders();
-    const lang = localStorage.getItem('app_lang')||'en';
-        el.innerHTML = '';
-        if (!arr.length) {
-            const txt = (window.translations.reminders_none && window.translations.reminders_none[lang]) || window.translations.reminders_none.en || 'No reminders.';
-            el.innerHTML = `<div class="small text-muted">${txt}</div>`;
-            return;
-        }
-        arr.sort((a,b)=> new Date(a.tarih) - new Date(b.tarih));
-        arr.forEach(r => {
-            const row = document.createElement('div');
-            row.className = 'd-flex justify-content-between align-items-start py-2 border-bottom';
-            const left = document.createElement('div');
-            const when = r.tarih ? formatDateEnglish(r.tarih) : (window.translations.noDate ? window.translations.noDate[lang] : 'No date');
-            left.innerHTML = `<div><strong>${r.havaAraci || '—'}</strong> — ${r.pilotlar || '—'}</div><div class="small text-muted">${when}</div>`;
-            const right = document.createElement('div');
-            const del = document.createElement('button');
-            del.className = 'btn btn-sm btn-outline-danger ms-2';
-            const delLang = localStorage.getItem('app_lang')||'en';
-            del.textContent = (window.translations.deleteFlight && (window.translations.deleteFlight[delLang] || window.translations.deleteFlight['en'])) || 'Delete';
-            del.addEventListener('click', function(){ if (confirm((window.translations && window.translations.confirmDeleteFlight) ? (window.translations.confirmDeleteFlight[localStorage.getItem('app_lang')||'en'] || window.translations.confirmDeleteFlight.en) : 'Delete?')) deleteReminder(r.id); });
-            right.appendChild(del);
-            row.appendChild(left);
-            row.appendChild(right);
-            el.appendChild(row);
-        });
-    }
-
-    function showReminderBannerIfAny() {
-        try {
-            const container = document.getElementById('reminderBannerContainer');
-            if (!container) return;
-            container.innerHTML = '';
-            const arr = getReminders();
-            if (!arr.length) return;
-            const now = new Date();
-            const tomorrow = new Date(now); tomorrow.setDate(now.getDate()+1); tomorrow.setHours(0,0,0,0);
-            const lang = localStorage.getItem('app_lang')||'en';
-            const toShow = arr.filter(r => {
-                if (r.seen) return false;
-                const d = r.tarih ? new Date(r.tarih) : null;
-                if (!d) return false;
-                // compare by date (local)
-                const dLocal = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-                return dLocal.getTime() === tomorrow.getTime();
-            });
-            if (!toShow.length) return;
-            // build banner
-            const alert = document.createElement('div');
-            alert.className = 'alert alert-warning alert-dismissible fade show';
-            alert.setAttribute('role','alert');
-            const title = (window.translations.reminderTomorrowMsg && window.translations.reminderTomorrowMsg[lang]) || window.translations.reminderTomorrowMsg.en || 'Tomorrow you have a flight.';
-            const listHtml = toShow.map(r => {
-                const when = r.tarih ? formatDateEnglish(r.tarih) : '';
-                return `<div><strong>${r.havaAraci || ''}</strong> — ${r.pilotlar || ''} • <small>${when}</small></div>`;
-            }).join('');
-            alert.innerHTML = `<div><strong>${title}</strong></div><div class="mt-1">${listHtml}</div>`;
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'btn-close';
-            button.setAttribute('aria-label', (window.translations.reminderDismiss && window.translations.reminderDismiss[lang]) || window.translations.reminderDismiss.en || 'Dismiss');
-            button.addEventListener('click', function(){
-                // mark these reminders as seen so they won't reappear
-                toShow.forEach(r => {
-                    r.seen = true;
-                    saveReminderObj(r);
-                });
-                // remove banner
-                try { bootstrap.Alert && bootstrap.Alert.getOrCreateInstance(alert).close(); } catch(e){ alert.remove(); }
-                // refresh UI list
-                populateRemindersUI();
-            });
-            alert.appendChild(button);
-            container.appendChild(alert);
-        } catch (err) { console.error('showReminderBannerIfAny error', err); }
-    }
 
     // wire add reminder button
     const addRemBtn = document.getElementById('addReminderBtn');
@@ -1106,47 +1285,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // reminders calendar: init and initial populate/banner check
-    let remindersCalendar = null;
-    function initRemindersCalendar() {
-        try {
-            const el = document.getElementById('remindersCalendar');
-            if (!el || typeof FullCalendar === 'undefined') return;
-            // destroy existing
-            if (remindersCalendar) {
-                try { remindersCalendar.destroy(); } catch(e){}
-                remindersCalendar = null;
-            }
-            const lang = localStorage.getItem('app_lang') || 'en';
-            remindersCalendar = new FullCalendar.Calendar(el, {
-                initialView: 'dayGridMonth',
-                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
-                buttonText: {
-                    today: 'Today',
-                    month: 'Month',
-                    week: 'Week',
-                    day: 'Day'
-                },
-                locale: (lang === 'tr' ? 'tr' : (lang === 'es' ? 'es' : 'en')),
-                events: getReminders().map(r => ({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }))
-            });
-            remindersCalendar.render();
-        } catch (err) { console.error('initRemindersCalendar error', err); }
-    }
-    function refreshRemindersCalendar() {
-        try {
-            if (!remindersCalendar) { initRemindersCalendar(); return; }
-            remindersCalendar.removeAllEvents();
-            getReminders().forEach(r => remindersCalendar.addEvent({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }));
-        } catch (err) { console.error('refreshRemindersCalendar error', err); initRemindersCalendar(); }
-    }
 
-    // initial populate and banner check
-    initRemindersCalendar();
-    // expose refresh for other handlers
-    window.refreshRemindersCalendar = refreshRemindersCalendar;
-    // make available globally and refresh on language change too
-    window.showReminderBannerIfAny = showReminderBannerIfAny;
 
     // Demo verileri yükle
     const demoLoad = document.getElementById('demoVeriYukle');
