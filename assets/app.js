@@ -4,7 +4,6 @@ let currentUser = null;
 let currentFlights = [];
 let currentAircrafts = [];
 let currentReminders = [];
-let privacyMode = false;
 
 function rowToFlightObj(row) {
     return {
@@ -159,70 +158,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // expose calendar globally so other functions can access it
     window.calendar = calendar;
 
-    // --- Privacy Mode Logic
-    async function fetchSettings() {
-        // Feature disabled to prevent 404 errors until 'user_settings' table is created in Supabase
-        privacyMode = false;
-        applyPrivacyMode();
-        return Promise.resolve();
-    }
-
-    async function savePrivacyMode(val) {
-        // Feature disabled to prevent 404 errors until 'user_settings' table is created in Supabase
-        return Promise.resolve();
-    }
-
-    function togglePrivacyMode() {
-        privacyMode = !privacyMode;
-        applyPrivacyMode();
-        savePrivacyMode(privacyMode);
-    }
-
-    function applyPrivacyMode() {
-        // Update UI state
-        const btn = document.getElementById('privacyToggleBtn');
-        const sw = document.getElementById('privacyModeSwitch');
-        const icon = btn ? btn.querySelector('i') : null;
-        
-        if (privacyMode) {
-            document.body.classList.add('privacy-active');
-            if (btn) {
-                btn.classList.add('active');
-                btn.setAttribute('title', 'Privacy Mode On');
-            }
-            if (icon) {
-                icon.className = 'bx bx-lock-alt';
-            }
-            if (sw) sw.checked = true;
-        } else {
-            document.body.classList.remove('privacy-active');
-            if (btn) {
-                btn.classList.remove('active');
-                btn.setAttribute('title', 'Privacy Mode Off');
-            }
-            if (icon) {
-                icon.className = 'bx bx-lock-open-alt';
-            }
-            if (sw) sw.checked = false;
-        }
-        // Re-render stats and lists to apply masking
-        updatePersonalStats();
-    }
-
-    // Wire up privacy controls
-    const privacyBtn = document.getElementById('privacyToggleBtn');
-    if (privacyBtn) {
-        privacyBtn.addEventListener('click', togglePrivacyMode);
-    }
-    const privacySwitch = document.getElementById('privacyModeSwitch');
-    if (privacySwitch) {
-        privacySwitch.addEventListener('change', function() {
-            privacyMode = this.checked;
-            applyPrivacyMode();
-            savePrivacyMode(privacyMode);
-        });
-    }
-
     // --- Auth & Data Loading Logic ---
     async function reloadUserData() {
         // Clear calendar events first
@@ -235,7 +170,6 @@ document.addEventListener('DOMContentLoaded', function() {
             currentFlights = [];
             currentAircrafts = [];
             currentReminders = [];
-            privacyMode = false;
             updatePersonalStats();
             return;
         }
@@ -243,8 +177,7 @@ document.addEventListener('DOMContentLoaded', function() {
         await Promise.all([
             fetchFlights(),
             fetchAircrafts(),
-            fetchReminders(),
-            fetchSettings()
+            fetchReminders()
         ]);
 
         // Re-add flights to calendar
@@ -418,35 +351,79 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Form submission
-    document.getElementById('ucusForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        const yeniUcus = {
-            havaAraci: document.getElementById('havaAraci').value,
-            pilotlar: document.getElementById('ucusPilotlari').value,
-            sure: document.getElementById('ucusSuresi').value,
-            kalkis: document.getElementById('kalkisYeri').value,
-            inis: document.getElementById('inisYeri').value,
-            // normalize to ISO if user provided datetime-local
-            tarih: (function(v){ try { return new Date(v).toISOString(); } catch(e){ return v; } })(document.getElementById('ucusTarihi').value),
-            ucusTipi: (document.getElementById('ucusTipi') && document.getElementById('ucusTipi').value) || 'Unknown',
-            ucusZamani: (document.getElementById('ucusZamani') && document.getElementById('ucusZamani').value) || '',
-            nightVision: (document.getElementById('nightVision') && document.getElementById('nightVision').checked) || false,
-            ucusNotu: (document.getElementById('ucusNotu') && document.getElementById('ucusNotu').value) || ''
-        };
-        (async () => {
-            const saved = await insertFlight(yeniUcus);
-            if (!saved) return;
-            calendar.addEvent({
-                id: saved.id,
-                title: `${saved.havaAraci} - ${saved.pilotlar}`,
-                start: saved.tarih,
-                extendedProps: saved
-            });
-            try { if (saved.havaAraci) saveAircraft(saved.havaAraci); } catch(e){}
-            if (window.updatePersonalStats) window.updatePersonalStats();
-            document.getElementById('ucusForm').reset();
-        })();
-    });
+    const ucusForm = document.getElementById('ucusForm');
+    if (ucusForm && !ucusForm.dataset.listenerAttached) {
+        ucusForm.dataset.listenerAttached = 'true';
+        ucusForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            e.stopImmediatePropagation(); // Prevent other listeners if any
+
+            if (this.dataset.isSubmitting === 'true') return;
+            this.dataset.isSubmitting = 'true';
+
+            const submitBtn = this.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Saving...';
+            }
+
+            const yeniUcus = {
+                havaAraci: document.getElementById('havaAraci').value,
+                pilotlar: document.getElementById('ucusPilotlari').value,
+                sure: document.getElementById('ucusSuresi').value,
+                kalkis: document.getElementById('kalkisYeri').value,
+                inis: document.getElementById('inisYeri').value,
+                // normalize to ISO if user provided datetime-local
+                tarih: (function(v){ try { return new Date(v).toISOString(); } catch(e){ return v; } })(document.getElementById('ucusTarihi').value),
+                ucusTipi: (document.getElementById('ucusTipi') && document.getElementById('ucusTipi').value) || 'Unknown',
+                ucusZamani: (document.getElementById('ucusZamani') && document.getElementById('ucusZamani').value) || '',
+                nightVision: (document.getElementById('nightVision') && document.getElementById('nightVision').checked) || false,
+                ucusNotu: (document.getElementById('ucusNotu') && document.getElementById('ucusNotu').value) || ''
+            };
+
+            // Client-side duplicate check (within last 1 minute)
+            const isDuplicate = currentFlights.some(f => 
+                f.havaAraci === yeniUcus.havaAraci && 
+                f.tarih === yeniUcus.tarih &&
+                f.pilotlar === yeniUcus.pilotlar
+            );
+
+            if (isDuplicate) {
+                const lang = localStorage.getItem('app_lang') || 'en';
+                if (!confirm('This flight seems to be a duplicate of an existing one. Save anyway?')) {
+                    this.dataset.isSubmitting = 'false';
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = (window.translations && window.translations.addFlight && window.translations.addFlight[lang]) || 'Add Flight';
+                    }
+                    return;
+                }
+            }
+
+            (async () => {
+                try {
+                    const saved = await insertFlight(yeniUcus);
+                    if (!saved) return;
+                    calendar.addEvent({
+                        id: saved.id,
+                        title: `${saved.havaAraci} - ${saved.pilotlar}`,
+                        start: saved.tarih,
+                        extendedProps: saved
+                    });
+                    try { if (saved.havaAraci) saveAircraft(saved.havaAraci); } catch(e){}
+                    if (window.updatePersonalStats) window.updatePersonalStats();
+                    document.getElementById('ucusForm').reset();
+                } finally {
+                    ucusForm.dataset.isSubmitting = 'false';
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        const lang = localStorage.getItem('app_lang') || 'en';
+                        submitBtn.textContent = (window.translations && window.translations.addFlight && window.translations.addFlight[lang]) || 'Add Flight';
+                    }
+                }
+            })();
+        });
+    }
 
     // Add demo data (button may have been removed; safe binding)
     const demoBtn = document.getElementById('demoVeriEkle');
@@ -899,34 +876,65 @@ function initRemindersCalendar() {
     try {
         const el = document.getElementById('remindersCalendar');
         if (!el || typeof FullCalendar === 'undefined') return;
+        
         // destroy existing
         if (remindersCalendar) {
             try { remindersCalendar.destroy(); } catch(e){}
             remindersCalendar = null;
         }
+        
         const lang = localStorage.getItem('app_lang') || 'en';
         remindersCalendar = new FullCalendar.Calendar(el, {
             initialView: 'dayGridMonth',
-            headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' },
-            buttonText: {
-                today: 'Today',
-                month: 'Month',
-                week: 'Week',
-                day: 'Day'
+            headerToolbar: {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay'
             },
-            locale: (lang === 'tr' ? 'tr' : (lang === 'es' ? 'es' : 'en')),
-            events: getReminders().map(r => ({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }))
+            locale: 'en',
+            height: 'auto',
+            events: getReminders().map(r => ({ 
+                id: r.id, 
+                title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, 
+                start: r.tarih,
+                extendedProps: r
+            })),
+            editable: true, // enable drag-n-drop
+            eventDrop: function(info) {
+                const ev = info.event;
+                const r = ev.extendedProps;
+                const newIso = ev.start ? ev.start.toISOString() : null;
+                if (newIso) {
+                    // Update local object and save
+                    const updated = { ...r, tarih: newIso };
+                    saveReminderObj(updated);
+                }
+            },
+            eventClick: function(info) {
+                const r = info.event.extendedProps;
+                const lang = localStorage.getItem('app_lang')||'en';
+                // Simple interaction: confirm delete
+                // (Ideally we would open a modal similar to flight details)
+                const msg = `Reminder:\nAircraft: ${r.havaAraci}\nPilots: ${r.pilotlar}\nNote: ${r.note || ''}\n\nDelete this reminder?`;
+                if (confirm(msg)) {
+                    deleteReminder(r.id);
+                }
+            }
         });
         remindersCalendar.render();
+        
+        // Force a resize after a short delay to ensure it fits the container
+        setTimeout(() => {
+            remindersCalendar.updateSize();
+        }, 200);
     } catch (err) { console.error('initRemindersCalendar error', err); }
 }
 
 function refreshRemindersCalendar() {
     try {
-        if (!remindersCalendar) { initRemindersCalendar(); return; }
-        remindersCalendar.removeAllEvents();
-        getReminders().forEach(r => remindersCalendar.addEvent({ id: r.id, title: `${r.havaAraci || ''} - ${r.pilotlar || ''}`, start: r.tarih }));
-    } catch (err) { console.error('refreshRemindersCalendar error', err); initRemindersCalendar(); }
+        // Always re-init to be safe with sizing
+        initRemindersCalendar();
+    } catch (err) { console.error('refreshRemindersCalendar error', err); }
 }
 
 async function saveAircraft(name) {
@@ -1428,51 +1436,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
 
-            document.getElementById('weeklyFlightHours').textContent = privacyMode ? '••••' : weekly.toFixed(1);
-            document.getElementById('monthlyFlightHours').textContent = privacyMode ? '••••' : monthly.toFixed(1);
-            document.getElementById('totalFlightHours').textContent = privacyMode ? '••••' : total.toFixed(1);
+            document.getElementById('weeklyFlightHours').textContent = weekly.toFixed(1);
+            document.getElementById('monthlyFlightHours').textContent = monthly.toFixed(1);
+            document.getElementById('totalFlightHours').textContent = total.toFixed(1);
 
-            // If privacy mode is active, hide charts and show placeholder
+            // Show charts
             const chartContainers = [
                 'flightPieChart', 'pilotPieChart', 'flightDayChart', 'flightNightChart'
             ];
             
-            if (privacyMode) {
-                chartContainers.forEach(id => {
-                    const canvas = document.getElementById(id);
-                    if (canvas) {
-                        canvas.style.display = 'none';
-                        // Check if placeholder exists, if not create it
-                        let placeholder = canvas.parentElement.querySelector('.privacy-placeholder-card');
-                        if (!placeholder) {
-                            placeholder = document.createElement('div');
-                            placeholder.className = 'privacy-placeholder-card';
-                            placeholder.innerHTML = '<i class="bx bx-lock-alt"></i><div>Privacy Mode Active<br><small>Charts Hidden</small></div>';
-                            canvas.parentElement.insertBefore(placeholder, canvas);
-                        } else {
-                            placeholder.style.display = 'flex';
-                        }
-                    }
-                });
-                // Also hide the breakdown list
-                const statsEl = document.getElementById('flightTypeStats');
-                if (statsEl) statsEl.innerHTML = '<div class="text-center text-muted py-3"><i class="bx bx-lock-alt"></i> Hidden</div>';
-            } else {
-                // Show canvases, hide placeholders
-                chartContainers.forEach(id => {
-                    const canvas = document.getElementById(id);
-                    if (canvas) {
-                        canvas.style.display = '';
-                        const placeholder = canvas.parentElement.querySelector('.privacy-placeholder-card');
-                        if (placeholder) placeholder.style.display = 'none';
-                    }
-                });
-            }
-
-            if (privacyMode) {
-                // Skip chart rendering if privacy mode is on
-                return;
-            }
+            chartContainers.forEach(id => {
+                const canvas = document.getElementById(id);
+                if (canvas) {
+                    canvas.style.display = '';
+                }
+            });
 
             const labels = Object.keys(typeSums);
             const data = labels.map(l => typeSums[l]);
@@ -1679,13 +1657,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         const hourText = (window.translations.hours && window.translations.hours[lang]) || 'hrs';
                         
                         let durationDisplay = parseFloat(u.sure||0).toFixed(1);
-                        let blurClass = '';
-                        if (privacyMode) {
-                            durationDisplay = '•••';
-                            blurClass = 'private-blur';
-                        }
 
-                        d.innerHTML = `<div><strong>${u.havaAraci || '—'}</strong> — ${u.pilotlar || '—'}</div><div class="small text-muted"><span class="${blurClass}">Duration: ${durationDisplay} ${hourText}</span> • ${when} • Type: ${tipLabel}</div>`;
+                        d.innerHTML = `<div><strong>${u.havaAraci || '—'}</strong> — ${u.pilotlar || '—'}</div><div class="small text-muted"><span>Duration: ${durationDisplay} ${hourText}</span> • ${when} • Type: ${tipLabel}</div>`;
                         listEl.appendChild(d);
                     });
                 }
@@ -1722,7 +1695,31 @@ document.addEventListener('DOMContentLoaded', function() {
     const remindersTabBtn = document.getElementById('reminders-tab');
     if (remindersTabBtn) {
         remindersTabBtn.addEventListener('shown.bs.tab', function() {
-            try { setTimeout(function(){ if (window.refreshRemindersCalendar) window.refreshRemindersCalendar(); }, 120); } catch(e) { console.debug('reminders tab show handler error', e); }
+            try { 
+                setTimeout(function(){ 
+                    if (remindersCalendar) {
+                        remindersCalendar.render();
+                        remindersCalendar.updateSize();
+                    } else {
+                        initRemindersCalendar();
+                    }
+                }, 50); 
+            } catch(e) { console.debug('reminders tab show handler error', e); }
+        });
+    }
+
+    // refresh main calendar when its tab is shown
+    const calendarTabBtn = document.getElementById('calendar-tab');
+    if (calendarTabBtn) {
+        calendarTabBtn.addEventListener('shown.bs.tab', function() {
+            try {
+                setTimeout(function() {
+                    if (window.calendar) {
+                        window.calendar.render();
+                        window.calendar.updateSize();
+                    }
+                }, 50);
+            } catch(e) { console.debug('calendar tab show handler error', e); }
         });
     }
 

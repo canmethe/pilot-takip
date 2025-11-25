@@ -73,11 +73,7 @@
                     <span data-i18n="title">Pilot Flight Tracker</span>
                 </h1>
                 <div class="d-flex align-items-center gap-2" id="authArea">
-                    <button id="privacyToggleBtn" title="Toggle Privacy Mode" aria-label="Toggle Privacy Mode">
-                        <i class='bx bx-lock-open-alt'></i>
-                    </button>
                     <button id="settingsToggle" class="btn btn-secondary" data-i18n="settings">Settings</button>
-                    <button id="mainSignOutBtn" class="btn btn-outline-danger btn-sm ms-2">Sign Out</button>
                 </div>
             </div>
 
@@ -103,18 +99,16 @@
                 <!-- Settings panel (hidden) -->
                 <div id="settingsPanel" class="card mb-3" style="display:none;">
                     <div class="card-body d-flex flex-column gap-2 align-items-start">
-                        <div class="d-flex gap-2 align-items-center w-100 mb-2">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="privacyModeSwitch">
-                                <label class="form-check-label" for="privacyModeSwitch" data-i18n="privacyModeLabel">Privacy Mode</label>
-                            </div>
-                            <small class="text-muted ms-2" data-i18n="privacyModeHint">(Hide sensitive flight hours)</small>
-                        </div>
                         <div class="d-flex gap-2 align-items-center w-100">
                             <span class="me-2" data-i18n="sandboxDataLabel">Sandbox / Data:</span>
                             <button id="veriTemizle" class="btn btn-danger" data-i18n="veriTemizle">Clear All Data</button>
                         </div>
                         <small class="text-muted ms-1" data-i18n="settingsWarning">(This will clear all records stored in localStorage)</small>
+                        <hr class="w-100 my-2" style="border-color: rgba(255,255,255,0.1);">
+                        <div class="d-flex gap-2 align-items-center w-100">
+                            <span class="me-2">Account:</span>
+                            <button id="mainSignOutBtn" class="btn btn-outline-danger btn-sm">Sign Out</button>
+                        </div>
                     </div>
                 </div>
 
