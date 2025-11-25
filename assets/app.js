@@ -160,16 +160,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Auth & Data Loading Logic ---
     async function reloadUserData() {
-        // Clear calendar events first
-        if (window.calendar) {
-            try { window.calendar.removeAllEvents(); } catch (e) {}
-        }
-        
         if (!currentUser) {
             // Clear local data
             currentFlights = [];
             currentAircrafts = [];
             currentReminders = [];
+            if (window.calendar) { try { window.calendar.removeAllEvents(); } catch (e) {} }
             updatePersonalStats();
             return;
         }
@@ -179,6 +175,11 @@ document.addEventListener('DOMContentLoaded', function() {
             fetchAircrafts(),
             fetchReminders()
         ]);
+
+        // Clear calendar events right before adding to prevent duplication from race conditions
+        if (window.calendar) {
+            try { window.calendar.removeAllEvents(); } catch (e) {}
+        }
 
         // Re-add flights to calendar
         currentFlights.forEach(f => {
