@@ -202,6 +202,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateAuthView() {
         const authContainer = document.getElementById('authContainer');
         const appContainer = document.getElementById('appContainer');
+        const loadingScreen = document.getElementById('loadingScreen');
         
         console.log('updateAuthView called. User:', currentUser ? currentUser.email : 'null');
 
@@ -229,6 +230,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 appContainer.style.display = 'none';
                 console.log('Hiding appContainer');
             }
+        }
+
+        // Hide loading screen after decision is made
+        if (loadingScreen) {
+            // Add a small fade out effect or just hide
+            loadingScreen.style.pointerEvents = 'none'; // Ensure clicks pass through immediately
+            loadingScreen.style.opacity = '0';
+            loadingScreen.style.transition = 'opacity 0.5s ease';
+            setTimeout(() => {
+                loadingScreen.style.display = 'none';
+            }, 500);
         }
     }
 

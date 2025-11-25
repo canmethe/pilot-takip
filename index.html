@@ -33,8 +33,14 @@
     
 </head>
 <body>
+    <!-- Loading Screen -->
+    <div id="loadingScreen" class="d-flex flex-column align-items-center justify-content-center" style="position: fixed; top: 0; left: 0; width: 100%; height: 100vh; z-index: 10000; background: var(--dark-bg);">
+        <i class='bx bxs-plane-take-off' style="font-size: 6rem; color: var(--accent-color); animation: planeLoading 2s ease-in-out infinite;"></i>
+        <div class="mt-3 text-muted" style="letter-spacing: 3px; font-size: 0.9rem;">LOADING</div>
+    </div>
+
     <!-- Auth / Landing Screen -->
-    <div id="authContainer" class="d-flex align-items-center justify-content-center" style="min-height: 100vh; position: fixed; top: 0; left: 0; width: 100%; z-index: 9999; background: var(--dark-bg);">
+    <div id="authContainer" class="align-items-center justify-content-center" style="display:none; min-height: 100vh; position: fixed; top: 0; left: 0; width: 100%; z-index: 9999; background: var(--dark-bg);">
         <div class="card p-4" style="max-width: 400px; width: 90%; border: 1px solid rgba(255,255,255,0.1);">
             <div class="text-center mb-4">
                 <i class='bx bxs-plane-take-off' style="font-size: 4rem; color: var(--accent-color);"></i>
