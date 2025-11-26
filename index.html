@@ -83,6 +83,22 @@
                 </div>
             </div>
 
+            <!-- Settings panel (hidden, outside tabs so accessible everywhere) -->
+            <div id="settingsPanel" class="card mb-3" style="display:none;">
+                <div class="card-body d-flex flex-column gap-2 align-items-start">
+                    <div class="d-flex gap-2 align-items-center w-100">
+                        <span class="me-2" data-i18n="sandboxDataLabel">Sandbox / Data:</span>
+                        <button id="veriTemizle" class="btn btn-danger" data-i18n="veriTemizle">Clear All Data</button>
+                    </div>
+                    <small class="text-muted ms-1" data-i18n="settingsWarning">(This will clear all records stored in localStorage)</small>
+                    <hr class="w-100 my-2" style="border-color: rgba(255,255,255,0.1);">
+                    <div class="d-flex gap-2 align-items-center w-100">
+                        <span class="me-2">Account:</span>
+                        <button id="mainSignOutBtn" class="btn btn-outline-danger btn-sm">Sign Out</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Reminder banner (populated by JS when there are upcoming reminders) -->
             <div id="reminderBannerContainer" class="mb-3"></div>
 
@@ -101,22 +117,6 @@
             <div class="tab-content" id="mainTabContent">
               <div class="tab-pane fade show active" id="calendarTabPane" role="tabpanel" aria-labelledby="calendar-tab">
                 <!-- Calendar and forms go here (existing content) -->
-
-                <!-- Settings panel (hidden) -->
-                <div id="settingsPanel" class="card mb-3" style="display:none;">
-                    <div class="card-body d-flex flex-column gap-2 align-items-start">
-                        <div class="d-flex gap-2 align-items-center w-100">
-                            <span class="me-2" data-i18n="sandboxDataLabel">Sandbox / Data:</span>
-                            <button id="veriTemizle" class="btn btn-danger" data-i18n="veriTemizle">Clear All Data</button>
-                        </div>
-                        <small class="text-muted ms-1" data-i18n="settingsWarning">(This will clear all records stored in localStorage)</small>
-                        <hr class="w-100 my-2" style="border-color: rgba(255,255,255,0.1);">
-                        <div class="d-flex gap-2 align-items-center w-100">
-                            <span class="me-2">Account:</span>
-                            <button id="mainSignOutBtn" class="btn btn-outline-danger btn-sm">Sign Out</button>
-                        </div>
-                    </div>
-                </div>
 
                 <!-- Add Flight Form -->
                 <div class="card mb-4">
@@ -205,21 +205,22 @@
           <div class="tab-pane fade" id="personalTabPane" role="tabpanel" aria-labelledby="personal-tab">
               <div class="card bg-dark text-light p-4 mt-3">
                   <h4 class="mb-4" data-i18n="title_personal">My Flight Info</h4>
-                  <div class="row">
+                  
+                  <div class="row mb-4">
                       <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightPieChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
+                          <canvas id="flightPieChart" width="300" height="300" style="max-width: 300px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_all">All Flight Types</div>
                       </div>
                       <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="pilotPieChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
+                          <canvas id="pilotPieChart" width="300" height="300" style="max-width: 300px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_pilot">All Pilots Type</div>
                       </div>
                       <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightDayChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
+                          <canvas id="flightDayChart" width="300" height="300" style="max-width: 300px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_day">Day Flights</div>
                       </div>
                       <div class="col-6 col-md-3 d-flex flex-column align-items-center justify-content-center mb-3">
-                          <canvas id="flightNightChart" width="200" height="200" style="max-width: 200px; width: 100%; height: auto;"></canvas>
+                          <canvas id="flightNightChart" width="300" height="300" style="max-width: 300px; width: 100%; height: auto;"></canvas>
                           <div class="mt-2 small text-muted" data-i18n="chart_night">Night Flights</div>
                       </div>
                   </div>
@@ -236,7 +237,7 @@
                       <div class="col-md-6">
                           <div class="card bg-dark text-light mb-3 p-3">
                               <div class="d-flex align-items-center mb-2">
-                                  <h6 class="m-0 me-2" data-i18n="myAircrafts">My Aircraft</h6>
+                                  <h6 class="m-0 me-2" data-i18n="myAircrafts">My Aircrafts</h6>
                                   <small class="text-muted" data-i18n="manageAircraftHint">Add aircraft you use often here</small>
                               </div>
                               <div class="input-group mb-2">
@@ -317,6 +318,49 @@
                         <button type="button" class="btn btn-danger" id="ucusSil" data-i18n="deleteFlight">Delete Flight</button>
                         <button type="button" class="btn btn-success" id="ucusKaydet" style="display:none;" data-i18n="saveBtn">Save</button>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="closeBtn">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Info Modal -->
+        <div class="modal fade" id="infoModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content bg-dark text-light" style="border: 1px solid var(--accent-color); box-shadow: 0 0 15px rgba(0, 255, 149, 0.2);">
+                    <div class="modal-header border-secondary" style="background: rgba(0, 255, 149, 0.1);">
+                        <h5 class="modal-title" id="infoModalTitle">
+                            <i class='bx bxs-plane-alt me-2'></i>Flight Deck Info
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-center py-4">
+                        <i class='bx bx-radar' style="font-size: 3rem; color: var(--accent-color); margin-bottom: 1rem;"></i>
+                        <p id="infoModalMessage" class="lead mb-0"></p>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-center">
+                        <button type="button" class="btn btn-outline-light px-4" data-bs-dismiss="modal">Copy That</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Confirmation Modal -->
+        <div class="modal fade" id="confirmationModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content bg-dark text-light" style="border: 1px solid #ffc107; box-shadow: 0 0 15px rgba(255, 193, 7, 0.2);">
+                    <div class="modal-header border-secondary" style="background: rgba(255, 193, 7, 0.1);">
+                        <h5 class="modal-title">
+                            <i class='bx bxs-error-circle me-2 text-warning'></i>Confirm Action
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body text-center py-4">
+                        <i class='bx bxs-plane-crash' style="font-size: 3rem; color: #ffc107; margin-bottom: 1rem;"></i>
+                        <p id="confirmationMessage" class="lead mb-0">Are you sure?</p>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-center">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" data-i18n="closeBtn">Abort</button>
+                        <button type="button" class="btn btn-warning text-dark" id="confirmActionBtn">Proceed</button>
                     </div>
                 </div>
             </div>

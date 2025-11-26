@@ -5,6 +5,49 @@ let currentFlights = [];
 let currentAircrafts = [];
 let currentReminders = [];
 
+// Info Modal Logic
+let infoModal = null;
+function showInfoModal(message, title = 'Information') {
+    const modalEl = document.getElementById('infoModal');
+    if (!modalEl) {
+        alert(message);
+        return;
+    }
+    if (!infoModal) {
+        infoModal = new bootstrap.Modal(modalEl);
+    }
+    const titleEl = document.getElementById('infoModalTitle');
+    if (titleEl) titleEl.textContent = title;
+    document.getElementById('infoModalMessage').textContent = message;
+    infoModal.show();
+}
+
+// Confirmation Modal Logic
+let pendingConfirmAction = null;
+let confirmModal = null;
+
+function showConfirmModal(message, action) {
+    const modalEl = document.getElementById('confirmationModal');
+    if (!modalEl) {
+        // fallback if modal missing
+        if(confirm(message)) action();
+        return;
+    }
+    if (!confirmModal) {
+        confirmModal = new bootstrap.Modal(modalEl);
+        const btn = document.getElementById('confirmActionBtn');
+        if (btn) {
+            btn.addEventListener('click', () => {
+                if (pendingConfirmAction) pendingConfirmAction();
+                confirmModal.hide();
+            });
+        }
+    }
+    document.getElementById('confirmationMessage').textContent = message;
+    pendingConfirmAction = action;
+    confirmModal.show();
+}
+
 function rowToFlightObj(row) {
     return {
         id: row.id,
@@ -54,7 +97,7 @@ async function fetchFlights() {
 
 async function insertFlight(ucus) {
     if (!currentUser) {
-        alert('Please sign in to save flights.');
+        showInfoModal('Please sign in to save flights.');
         return null;
     }
     try {
@@ -63,7 +106,7 @@ async function insertFlight(ucus) {
         const { data, error } = await supabase.from('flights').insert(payload).select('*').single();
         if (error) {
             console.error('insertFlight error:', error.message);
-            alert('Failed to save flight.');
+            showInfoModal('Failed to save flight.');
             return null;
         }
         const saved = rowToFlightObj(data);
@@ -71,7 +114,7 @@ async function insertFlight(ucus) {
         return saved;
     } catch (e) {
         console.error('insertFlight exception:', e);
-        alert('Failed to save flight.');
+        showInfoModal('Failed to save flight.');
         return null;
     }
 }
@@ -90,7 +133,7 @@ async function updateFlightInDb(ucus) {
             .single();
         if (error) {
             console.error('updateFlightInDb error:', error.message);
-            alert('Failed to update flight.');
+            showInfoModal('Failed to update flight.');
             return null;
         }
         const updated = rowToFlightObj(data);
@@ -99,7 +142,7 @@ async function updateFlightInDb(ucus) {
         return updated;
     } catch (e) {
         console.error('updateFlightInDb exception:', e);
-        alert('Failed to update flight.');
+        showInfoModal('Failed to update flight.');
         return null;
     }
 }
@@ -110,13 +153,13 @@ async function deleteFlightInDb(id) {
         const { error } = await supabase.from('flights').delete().eq('id', id);
         if (error) {
             console.error('deleteFlightInDb error:', error.message);
-            alert('Failed to delete flight.');
+            showInfoModal('Failed to delete flight.');
             return;
         }
         currentFlights = currentFlights.filter(f => f.id !== id);
     } catch (e) {
         console.error('deleteFlightInDb exception:', e);
-        alert('Failed to delete flight.');
+        showInfoModal('Failed to delete flight.');
     }
 }
 
@@ -358,9 +401,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     if (mainSignOutBtn) mainSignOutBtn.addEventListener('click', async () => {
-        if(confirm('Sign out?')) {
-            try { await signOut(); } catch(e){ alert(e.message); }
-        }
+        showConfirmModal('Sign out?', async () => {
+            try { await signOut(); } catch(e){ showInfoModal(e.message); }
+        });
     });
 
     // Form submission
@@ -403,14 +446,53 @@ document.addEventListener('DOMContentLoaded', function() {
 
             if (isDuplicate) {
                 const lang = localStorage.getItem('app_lang') || 'en';
-                if (!confirm('This flight seems to be a duplicate of an existing one. Save anyway?')) {
-                    this.dataset.isSubmitting = 'false';
-                    if (submitBtn) {
-                        submitBtn.disabled = false;
-                        submitBtn.textContent = (window.translations && window.translations.addFlight && window.translations.addFlight[lang]) || 'Add Flight';
-                    }
-                    return;
+                showConfirmModal('This flight seems to be a duplicate of an existing one. Save anyway?', () => {
+                    // User confirmed, proceed with save
+                    (async () => {
+                        try {
+                            const saved = await insertFlight(yeniUcus);
+                            if (!saved) return;
+                            calendar.addEvent({
+                                id: saved.id,
+                                title: `${saved.havaAraci} - ${saved.pilotlar}`,
+                                start: saved.tarih,
+                                extendedProps: saved
+                            });
+                            try { if (saved.havaAraci) saveAircraft(saved.havaAraci); } catch(e){}
+                            if (window.updatePersonalStats) window.updatePersonalStats();
+                            document.getElementById('ucusForm').reset();
+                        } finally {
+                            ucusForm.dataset.isSubmitting = 'false';
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                const lang = localStorage.getItem('app_lang') || 'en';
+                                submitBtn.textContent = (window.translations && window.translations.addFlight && window.translations.addFlight[lang]) || 'Add Flight';
+                            }
+                        }
+                    })();
+                });
+                // Since showConfirmModal is async (callback based), we need to reset the button state immediately 
+                // because the original flow stops here. The callback will handle the rest.
+                // However, we want to keep the button disabled until user decides? 
+                // Actually, if we return here, the button stays "Saving...". 
+                // If user cancels (closes modal), we need to reset button.
+                // My simple showConfirmModal doesn't have a cancel callback.
+                // Let's update showConfirmModal to handle cancel or just reset button here and let user click again if they confirm?
+                // No, that's bad UX.
+                // Let's just return for now. If they close modal, button stays stuck. 
+                // I should improve showConfirmModal to handle cancel/close.
+                
+                // Quick fix: Re-enable button immediately, if they confirm, it will disable again in the callback?
+                // No, the callback calls insertFlight which doesn't disable button (the submit handler does).
+                // Let's just reset the button state here. If they confirm, the callback runs.
+                // But wait, the callback duplicates the logic below.
+                
+                this.dataset.isSubmitting = 'false';
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = (window.translations && window.translations.addFlight && window.translations.addFlight[lang]) || 'Add Flight';
                 }
+                return;
             }
 
             (async () => {
@@ -480,16 +562,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const ucusId = this.dataset.ucusId;
         if (ucusId) {
             const lang = localStorage.getItem('app_lang')||'en';
-    if (confirm(window.translations.confirmDeleteFlight[lang]||window.translations.confirmDeleteFlight.en)) {
-                silUcus(ucusId);
-                calendar.getEvents().forEach(event => {
-                    if (event.id === ucusId) {
-                        event.remove();
-                    }
-                });
-                const modal = bootstrap.Modal.getInstance(document.getElementById('ucusDetayModal'));
-                modal.hide();
+            const msg = window.translations.confirmDeleteFlight[lang]||window.translations.confirmDeleteFlight.en;
+            
+            // Hide details modal first to avoid stacking issues
+            const detailsModalEl = document.getElementById('ucusDetayModal');
+            const detailsModal = bootstrap.Modal.getInstance(detailsModalEl);
+            if (detailsModal) {
+                detailsModal.hide();
             }
+
+            // Small delay to ensure UI updates before showing new modal
+            setTimeout(() => {
+                showConfirmModal(msg, () => {
+                    silUcus(ucusId);
+                    calendar.getEvents().forEach(event => {
+                        if (event.id === ucusId) {
+                            event.remove();
+                        }
+                    });
+                });
+            }, 200);
         }
     });
 });
@@ -623,10 +715,10 @@ function splitCsvRow(line) {
 }
 
 async function handleImportArray(arr) {
-    if (!Array.isArray(arr) || !arr.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.importEmpty[lang]||window.translations.importEmpty.en); return; }
+    if (!Array.isArray(arr) || !arr.length) { const lang = localStorage.getItem('app_lang')||'en'; showInfoModal(window.translations.importEmpty[lang]||window.translations.importEmpty.en); return; }
     
     if (!currentUser) {
-        alert('Please sign in to import data.');
+        showInfoModal('Please sign in to import data.');
         return;
     }
 
@@ -661,7 +753,7 @@ async function handleImportArray(arr) {
     
     if (window.updatePersonalStats) window.updatePersonalStats();
     const lang = localStorage.getItem('app_lang')||'en';
-    alert((window.translations.importSuccess[lang]||window.translations.importSuccess.en) + ` (${importedCount})`);
+    showInfoModal((window.translations.importSuccess[lang]||window.translations.importSuccess.en) + ` (${importedCount})`);
 }
 
 function downloadFile(content, filename, mime) {
@@ -827,7 +919,10 @@ function populateRemindersUI() {
         del.className = 'btn btn-sm btn-outline-danger ms-2';
         const delLang = localStorage.getItem('app_lang')||'en';
         del.textContent = (window.translations.deleteFlight && (window.translations.deleteFlight[delLang] || window.translations.deleteFlight['en'])) || 'Delete';
-        del.addEventListener('click', function(){ if (confirm((window.translations && window.translations.confirmDeleteFlight) ? (window.translations.confirmDeleteFlight[localStorage.getItem('app_lang')||'en'] || window.translations.confirmDeleteFlight.en) : 'Delete?')) deleteReminder(r.id); });
+        del.addEventListener('click', function(){ 
+            const msg = (window.translations && window.translations.confirmDeleteFlight) ? (window.translations.confirmDeleteFlight[localStorage.getItem('app_lang')||'en'] || window.translations.confirmDeleteFlight.en) : 'Delete?';
+            showConfirmModal(msg, () => deleteReminder(r.id)); 
+        });
         right.appendChild(del);
         row.appendChild(left);
         row.appendChild(right);
@@ -1017,9 +1112,13 @@ function updateAircraftListUI() {
         const del = document.createElement('button');
         del.className = 'btn btn-sm btn-outline-danger ms-2 remove-aircraft';
         const delLang = localStorage.getItem('app_lang')||'en';
-        del.textContent = (window.translations && window.translations.deleteFlight) ? (window.translations.deleteFlight[delLang] || window.translations.deleteFlight['en']) : 'Delete';
+        del.textContent = (window.translations && window.translations.deleteAircraft) ? (window.translations.deleteAircraft[delLang] || window.translations.deleteAircraft['en']) : 'Delete Aircraft';
         del.setAttribute('data-name', a);
-    del.addEventListener('click', function() { const lang = localStorage.getItem('app_lang')||'en'; if (confirm(window.translations.confirmDeleteAircraft[lang]||window.translations.confirmDeleteAircraft.en)) deleteAircraft(a); });
+        del.addEventListener('click', function() { 
+            const lang = localStorage.getItem('app_lang')||'en'; 
+            const msg = window.translations.confirmDeleteAircraft[lang]||window.translations.confirmDeleteAircraft.en;
+            showConfirmModal(msg, () => deleteAircraft(a)); 
+        });
         right.appendChild(del);
         row.appendChild(left);
         row.appendChild(right);
@@ -1169,12 +1268,13 @@ document.addEventListener('DOMContentLoaded', function() {
         ucusTarihiPlaceholder: { en: 'MM/DD/YYYY' },
         edit: { en: 'Edit' },
         deleteFlight: { en: 'Delete Flight' },
+        deleteAircraft: { en: 'Delete Aircraft' },
         saveBtn: { en: 'Save' },
         closeBtn: { en: 'Close' },
         clearPersonalHint: { en: '(This will delete all flight records in your session)' },
         hours: { en: 'hrs' },
 
-        myAircrafts: { en: 'My Aircraft' },
+        myAircrafts: { en: 'My Aircrafts' },
         manageAircraftHint: { en: 'Add aircraft you use often here' },
         addAircraftBtn: { en: 'Add' },
         aircraftPlaceholder: { en: 'Aircraft name' },
@@ -1286,23 +1386,42 @@ document.addEventListener('DOMContentLoaded', function() {
     // wire add reminder button
     const addRemBtn = document.getElementById('addReminderBtn');
     if (addRemBtn) {
-        addRemBtn.addEventListener('click', function(){
+        addRemBtn.addEventListener('click', async function(){
             const ha = document.getElementById('rem_havaAraci');
             const p = document.getElementById('rem_pilotlar');
             const dt = document.getElementById('rem_date');
             const noteInput = document.getElementById('rem_note');
+            
             if (!dt || !dt.value) return alert((window.translations && window.translations.reminderDateMissing) ? window.translations.reminderDateMissing[localStorage.getItem('app_lang')||'en'] : window.translations.reminderDateMissing.en || 'Please select date & time.');
-            const r = { havaAraci: ha ? ha.value : '', pilotlar: p ? p.value : '', tarih: dt.value, note: noteInput ? (noteInput.value || '') : '', seen: false };
-            saveReminderObj(r);
+            
+            // Past date check
+            const selectedDate = new Date(dt.value);
+            const now = new Date();
+            if (selectedDate < now) {
+                showInfoModal("Cannot add reminder for a past date.");
+                return;
+            }
+
+            // Convert to ISO string to ensure timezone is handled correctly (stored as UTC)
+            const isoDate = selectedDate.toISOString();
+
+            const r = { havaAraci: ha ? ha.value : '', pilotlar: p ? p.value : '', tarih: isoDate, note: noteInput ? (noteInput.value || '') : '', seen: false };
+            
+            // Wait for save to complete so currentReminders is updated
+            await saveReminderObj(r);
+            
             // ensure aircraft list includes it
             try { if (r.havaAraci) saveAircraft(r.havaAraci); } catch(e){}
+            
             populateRemindersUI();
+            
             // refresh reminders calendar
             try { if (window.refreshRemindersCalendar) window.refreshRemindersCalendar(); } catch(e){}
+            
             // clear inputs
             if (ha) ha.value = ''; if (p) p.value = ''; if (dt) dt.value = '';
             const lang = localStorage.getItem('app_lang')||'en';
-            alert(window.translations.added ? (window.translations.added[lang] || window.translations.added.en) : 'Added');
+            showInfoModal(window.translations.added ? (window.translations.added[lang] || window.translations.added.en) : 'Added');
         });
     }
 
@@ -1330,24 +1449,29 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Info Modal Logic & Confirmation Modal Logic moved to global scope
+
+
     // Tüm verileri temizle
     const clearBtn = document.getElementById('veriTemizle');
-    clearBtn && clearBtn.addEventListener('click', async function() {
+    clearBtn && clearBtn.addEventListener('click', function() {
         const lang = localStorage.getItem('app_lang')||'en';
-        if (!confirm(window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en)) return;
+        const msg = window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en;
         
-        if (currentUser) {
-            const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
-            if (error) {
-                console.error('Clear data error:', error);
-                alert('Failed to clear data.');
-                return;
+        showConfirmModal(msg, async () => {
+            if (currentUser) {
+                const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
+                if (error) {
+                    console.error('Clear data error:', error);
+                    alert('Failed to clear data.');
+                    return;
+                }
             }
-        }
-        currentFlights = [];
-        if (window.calendar) window.calendar.removeAllEvents();
-        updatePersonalStats();
-        alert(window.translations.recordsDeleted[lang]||window.translations.recordsDeleted.en);
+            currentFlights = [];
+            if (window.calendar) window.calendar.removeAllEvents();
+            updatePersonalStats();
+            alert(window.translations.recordsDeleted[lang]||window.translations.recordsDeleted.en);
+        });
     });
 
     // Export / Import handlers (CSV / JSON)
@@ -1357,14 +1481,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     exportCsvBtn && exportCsvBtn.addEventListener('click', function() {
         const events = currentFlights;
-    if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
+    if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; showInfoModal(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
         const csv = toCSV(events);
         downloadFile(csv, 'pilot_ucuslar.csv', 'text/csv;charset=utf-8;');
     });
 
     exportJsonBtn && exportJsonBtn.addEventListener('click', function() {
         const events = currentFlights;
-    if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; alert(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
+    if (!events.length) { const lang = localStorage.getItem('app_lang')||'en'; showInfoModal(window.translations.noEntries[lang]||window.translations.noEntries.en); return; }
         const json = JSON.stringify(events, null, 2);
         downloadFile(json, 'pilot_ucuslar.json', 'application/json');
     });
@@ -1382,7 +1506,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 } catch (err) {
                     const lang = localStorage.getItem('app_lang')||'en';
                     const tmpl = window.translations.importJsonError && window.translations.importJsonError[lang] ? window.translations.importJsonError[lang] : window.translations.importJsonError.en;
-                    alert(tmpl.replace('{err}', err && err.message ? err.message : String(err)));
+                    showInfoModal(tmpl.replace('{err}', err && err.message ? err.message : String(err)));
                 }
             } else {
                 // assume CSV
@@ -1600,7 +1724,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     dayChart = new Chart(ctxDay, {
                         type: 'pie',
                         data: { labels: dayChartLabels, datasets: [{ data: dayChartData, backgroundColor: dayChartBg }] },
-                        options: { plugins: { legend: { labels: { color: '#fff' } } } }
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: { position: 'bottom', labels: { color: '#fff' } },
+                                tooltip: { mode: 'index' }
+                            }
+                        }
                     });
                 }
             }
@@ -1633,7 +1763,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     nightChart = new Chart(ctxNight, {
                         type: 'pie',
                         data: { labels: nightChartLabels, datasets: [{ data: nightChartData, backgroundColor: nightChartBg }] },
-                        options: { plugins: { legend: { labels: { color: '#fff' } } } }
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: { position: 'bottom', labels: { color: '#fff' } },
+                                tooltip: { mode: 'index' }
+                            }
+                        }
                     });
                 }
             }
@@ -1752,25 +1888,27 @@ document.addEventListener('DOMContentLoaded', function() {
     // clear personal data button
     const clearPersonalBtn = document.getElementById('clearPersonalData');
     if (clearPersonalBtn) {
-        clearPersonalBtn.addEventListener('click', async function() {
+        clearPersonalBtn.addEventListener('click', function() {
             const lang = localStorage.getItem('app_lang')||'en';
-            if (!confirm(window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en)) return;
-            
-            if (currentUser) {
-                const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
-                if (error) {
-                    console.error('Clear data error:', error);
-                    alert('Failed to clear data.');
-                    return;
+            const msg = window.translations.confirmClearAll[lang]||window.translations.confirmClearAll.en;
+
+            showConfirmModal(msg, async () => {
+                if (currentUser) {
+                    const { error } = await supabase.from('flights').delete().eq('user_id', currentUser.id);
+                    if (error) {
+                        console.error('Clear data error:', error);
+                        alert('Failed to clear data.');
+                        return;
+                    }
                 }
-            }
-            currentFlights = [];
-            // refresh calendar and personal stats
-            if (window.calendar) {
-                window.calendar.removeAllEvents();
-            }
-            updatePersonalStats();
-            alert(window.translations.recordsDeleted[lang]||window.translations.recordsDeleted.en);
+                currentFlights = [];
+                // refresh calendar and personal stats
+                if (window.calendar) {
+                    window.calendar.removeAllEvents();
+                }
+                updatePersonalStats();
+                alert(window.translations.recordsDeleted[lang]||window.translations.recordsDeleted.en);
+            });
         });
     }
 
@@ -1785,7 +1923,7 @@ document.addEventListener('DOMContentLoaded', function() {
             saveAircraft(v);
             inp.value = '';
             const lang = localStorage.getItem('app_lang')||'en';
-            alert(window.translations.added[lang] || window.translations.added.en);
+            showInfoModal(window.translations.added[lang] || window.translations.added.en);
         });
     }
 
@@ -1802,6 +1940,7 @@ document.addEventListener('DOMContentLoaded', function() {
     };
     // expose updater to global so other flows (import) can call it
     window.updatePersonalStats = updatePersonalStats;
+    window.refreshRemindersCalendar = refreshRemindersCalendar;
     // expose Supabase test helper globally
     window.fetchFlights = fetchFlights;
 });

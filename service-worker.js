@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pilot-tracker-v7';
+const CACHE_NAME = 'pilot-tracker-v25';
 const urlsToCache = [
   '/',
   '/index.html',
